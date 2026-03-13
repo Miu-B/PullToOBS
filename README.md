@@ -33,6 +33,10 @@ I already had [rec-cue](https://github.com/Miu-B/rec-cue) to show me an in-game 
   * Indicator position, scale, and visibility settings
   * All settings are saved automatically
 
+## Companion Tool
+
+Since PullToOBS produces two files per encounter (a replay buffer clip and the full recording), you'll probably want to stitch them together afterwards. [limitcut](https://github.com/Miu-B/limitcut) does exactly that -- it finds where the two recordings overlap using audio cross-correlation and combines them into a single MP4, no manual trimming required.
+
 ## Requirements
 
 * [OBS Studio](https://obsproject.com/) with WebSocket v5 enabled (Settings > WebSocket Server)
