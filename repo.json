@@ -22,8 +22,8 @@
             "iinact",
             "automation"
         ],
-        "DownloadLinkInstall": "https://github.com/Miu-B/PullToOBS/releases/latest/download/PullToOBS.zip",
-        "DownloadLinkTesting": "https://github.com/Miu-B/PullToOBS/releases/latest/download/PullToOBS.zip",
-        "DownloadLinkUpdate": "https://github.com/Miu-B/PullToOBS/releases/latest/download/PullToOBS.zip"
+        "DownloadLinkInstall": "https://github.com/Miu-B/PullToOBS/releases/latest/download/latest.zip",
+        "DownloadLinkTesting": "https://github.com/Miu-B/PullToOBS/releases/latest/download/latest.zip",
+        "DownloadLinkUpdate": "https://github.com/Miu-B/PullToOBS/releases/latest/download/latest.zip"
     }
 ]

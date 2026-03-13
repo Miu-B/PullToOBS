@@ -42,5 +42,9 @@ jobs:
           files: PullToOBS/bin/Release/PullToOBS/latest.zip
           name: PullToOBS ${{ github.ref_name }}
           generate_release_notes: true
+          body: |
+            ## Installation
+            Add this repository URL to Dalamud Plugin Installer:
+            `https://raw.githubusercontent.com/Miu-B/PullToOBS/master/repo.json`
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
