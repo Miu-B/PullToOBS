@@ -1,10 +1,9 @@
 using System;
-using System.Threading;
 using System.Threading.Tasks;
+using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Plugin.Services;
 using NSubstitute;
 using PullToOBS;
-using PullToOBS.Models;
 using Xunit;
 
 namespace PullToOBS.Tests;
@@ -12,14 +11,16 @@ namespace PullToOBS.Tests;
 public class EncounterManagerTests : IDisposable
 {
     private readonly IOBSController _obs;
-    private readonly IIINACTClient _iinact;
+    private readonly ICondition _condition;
     private readonly IPluginLog _log;
     private readonly EncounterManager _sut;
+
+    private bool _inCombat;
 
     public EncounterManagerTests()
     {
         _obs = Substitute.For<IOBSController>();
-        _iinact = Substitute.For<IIINACTClient>();
+        _condition = Substitute.For<ICondition>();
         _log = Substitute.For<IPluginLog>();
 
         // Default: OBS is connected and not recording
@@ -27,7 +28,11 @@ public class EncounterManagerTests : IDisposable
         _obs.IsRecording.Returns(false);
         _obs.IsReplayBufferConfigured.Returns(false);
 
-        _sut = new EncounterManager(_obs, _iinact, _log);
+        // Default: not in combat
+        _inCombat = false;
+        _condition[ConditionFlag.InCombat].Returns(_ => _inCombat);
+
+        _sut = new EncounterManager(_obs, _condition, _log);
     }
 
     public void Dispose()
@@ -35,11 +40,11 @@ public class EncounterManagerTests : IDisposable
         _sut.Dispose();
     }
 
-    /// <summary>Raises the CombatStateChanged event on the mock.</summary>
-    private void RaiseCombatStateChanged(bool inGame, bool inAct)
+    /// <summary>Sets combat state and calls Update to trigger detection.</summary>
+    private void SetCombatState(bool inCombat)
     {
-        _iinact.CombatStateChanged += Raise.Event<Action<InCombatPayload>>(
-            new InCombatPayload(inGame, inAct));
+        _inCombat = inCombat;
+        _sut.Update();
     }
 
     [Fact]
@@ -51,7 +56,7 @@ public class EncounterManagerTests : IDisposable
     [Fact]
     public async Task EnteringCombat_StartsRecording()
     {
-        RaiseCombatStateChanged(inGame: true, inAct: false);
+        SetCombatState(true);
 
         // Give the background task a moment to run
         await Task.Delay(200);
@@ -65,7 +70,7 @@ public class EncounterManagerTests : IDisposable
     {
         _obs.IsConnected.Returns(false);
 
-        RaiseCombatStateChanged(inGame: true, inAct: true);
+        SetCombatState(true);
         await Task.Delay(200);
 
         Assert.True(_sut.IsInCombat);
@@ -78,11 +83,11 @@ public class EncounterManagerTests : IDisposable
         _obs.IsRecording.Returns(true);
 
         // Enter combat
-        RaiseCombatStateChanged(inGame: true, inAct: false);
+        SetCombatState(true);
         await Task.Delay(200);
 
         // Leave combat
-        RaiseCombatStateChanged(inGame: false, inAct: false);
+        SetCombatState(false);
 
         // Should NOT have stopped yet (grace period is 5s, we only wait briefly)
         await Task.Delay(200);
@@ -97,14 +102,14 @@ public class EncounterManagerTests : IDisposable
         _obs.IsRecording.Returns(true);
 
         // Enter -> Leave -> Re-enter combat quickly
-        RaiseCombatStateChanged(inGame: true, inAct: false);
+        SetCombatState(true);
         await Task.Delay(200);
 
-        RaiseCombatStateChanged(inGame: false, inAct: false);
+        SetCombatState(false);
         await Task.Delay(100);
 
         // Re-enter before grace period expires
-        RaiseCombatStateChanged(inGame: true, inAct: false);
+        SetCombatState(true);
         await Task.Delay(6000);
 
         // StopRecording should NOT have been called -- the pending stop was cancelled
@@ -117,9 +122,22 @@ public class EncounterManagerTests : IDisposable
         var fired = false;
         _sut.StateChanged += () => fired = true;
 
-        RaiseCombatStateChanged(inGame: true, inAct: false);
+        SetCombatState(true);
 
         Assert.True(fired);
+    }
+
+    [Fact]
+    public void StateChanged_DoesNotFireWhenStateUnchanged()
+    {
+        var fireCount = 0;
+        _sut.StateChanged += () => fireCount++;
+
+        // Call Update without changing state
+        _sut.Update();
+        _sut.Update();
+
+        Assert.Equal(0, fireCount);
     }
 
     [Fact]
@@ -128,10 +146,9 @@ public class EncounterManagerTests : IDisposable
         var fired = false;
         _sut.EncounterStarted += () => fired = true;
 
-        RaiseCombatStateChanged(inGame: true, inAct: false);
+        SetCombatState(true);
 
-        // EncounterStarted fires after the replay buffer save delay (5s),
-        // but we can check it fires eventually
+        // EncounterStarted fires after the replay buffer save delay (5s)
         await Task.Delay(6000);
 
         Assert.True(fired);
@@ -141,7 +158,7 @@ public class EncounterManagerTests : IDisposable
     public async Task Dispose_CancelsInFlightOperations()
     {
         // Enter combat to start a background task
-        RaiseCombatStateChanged(inGame: true, inAct: false);
+        SetCombatState(true);
         await Task.Delay(100);
 
         // Dispose while the replay buffer delay is pending
@@ -158,16 +175,14 @@ public class EncounterManagerTests : IDisposable
     }
 
     [Fact]
-    public void Dispose_UnsubscribesFromEvents()
+    public void Dispose_PreventsSubsequentUpdates()
     {
         _sut.Dispose();
 
-        // After disposal, raising events should not cause any OBS calls
-        // (event handlers were removed, so NSubstitute won't route them to the disposed manager)
+        // After disposal, Update should not cause any OBS calls
         _obs.ClearReceivedCalls();
 
-        // This should not reach the disposed EncounterManager
-        RaiseCombatStateChanged(inGame: true, inAct: false);
+        SetCombatState(true);
 
         _obs.DidNotReceive().StartRecording();
     }
@@ -178,7 +193,7 @@ public class EncounterManagerTests : IDisposable
         _obs.IsReplayBufferConfigured.Returns(true);
         _obs.IsRecording.Returns(true);
 
-        RaiseCombatStateChanged(inGame: true, inAct: true);
+        SetCombatState(true);
 
         // Wait for the replay buffer save delay (5s) + margin
         await Task.Delay(6000);
@@ -192,7 +207,7 @@ public class EncounterManagerTests : IDisposable
         _obs.IsReplayBufferConfigured.Returns(false);
         _obs.IsRecording.Returns(true);
 
-        RaiseCombatStateChanged(inGame: true, inAct: true);
+        SetCombatState(true);
         await Task.Delay(6000);
 
         _obs.DidNotReceive().SaveReplayBuffer();
@@ -206,35 +221,37 @@ public class EncounterManagerTests : IDisposable
         string? errorMsg = null;
         _sut.ErrorOccurred += msg => errorMsg = msg;
 
-        RaiseCombatStateChanged(inGame: true, inAct: false);
+        SetCombatState(true);
         await Task.Delay(200);
 
         Assert.NotNull(errorMsg);
         Assert.Contains("OBS error", errorMsg);
     }
 
-    [Theory]
-    [InlineData(true, false)]
-    [InlineData(false, true)]
-    [InlineData(true, true)]
-    public async Task EnteringCombat_AnyTrueFlag_IsInCombat(bool inGame, bool inAct)
+    [Fact]
+    public async Task LeavingAndReentering_ProducesContinuousRecording()
     {
-        RaiseCombatStateChanged(inGame, inAct);
+        _obs.IsRecording.Returns(true);
+
+        // Enter combat
+        SetCombatState(true);
         await Task.Delay(200);
 
-        Assert.True(_sut.IsInCombat);
-        _obs.Received(1).StartRecording();
-    }
-
-    [Fact]
-    public async Task BothFlagsFalse_NotInCombat()
-    {
-        // First enter combat, then leave
-        RaiseCombatStateChanged(inGame: true, inAct: false);
+        // Leave combat briefly
+        SetCombatState(false);
         await Task.Delay(100);
 
-        RaiseCombatStateChanged(inGame: false, inAct: false);
+        // Re-enter combat
+        SetCombatState(true);
+        await Task.Delay(100);
 
-        Assert.False(_sut.IsInCombat);
+        // Leave again
+        SetCombatState(false);
+
+        // Wait full grace period
+        await Task.Delay(6000);
+
+        // StopRecording should be called exactly once (from the final leave)
+        _obs.Received(1).StopRecording();
     }
 }

@@ -25,7 +25,6 @@ public sealed class PullToOBSPlugin : IDalamudPlugin
 
     public PullToOBSConfiguration Configuration { get; private set; }
     public IOBSController ObsController { get; private set; }
-    public IIINACTClient IINACTClient { get; private set; }
     public EncounterManager EncounterManager { get; private set; }
 
     public WindowSystem WindowSystem { get; } = new("PullToOBS");
@@ -43,11 +42,9 @@ public sealed class PullToOBSPlugin : IDalamudPlugin
         Configuration.SetSaveAction(PluginInterface.SavePluginConfig);
 
         ObsController = new OBSController(Log);
-        IINACTClient = new IINACTIpcClient(PluginInterface, Log);
-        EncounterManager = new EncounterManager(ObsController, IINACTClient, Log);
+        EncounterManager = new EncounterManager(ObsController, Condition, Log);
 
         ObsController.ErrorOccurred += OnOBSError;
-        IINACTClient.ErrorOccurred += OnIINACTError;
         EncounterManager.ErrorOccurred += OnEncounterError;
 
         ConfigWindow = new PullToOBSConfigWindow(this, ChatGui);
@@ -103,12 +100,11 @@ public sealed class PullToOBSPlugin : IDalamudPlugin
 
     /// <summary>
     /// Called every frame on the game/framework thread.
-    /// Handles IPC polling that must run on this thread.
+    /// Polls combat state via Dalamud condition flags.
     /// </summary>
     private void OnFrameworkUpdate(IFramework framework)
     {
-        IINACTClient.TryConnect();
-        IINACTClient.TryHeartbeat();
+        EncounterManager.Update();
     }
 
     private void DrawUi()
@@ -152,11 +148,6 @@ public sealed class PullToOBSPlugin : IDalamudPlugin
         ChatGui.Print($"[PullToOBS] Error: {message}");
     }
 
-    private void OnIINACTError(string message)
-    {
-        Log.Warning($"IINACT Error: {message}");
-    }
-
     private void OnEncounterError(string message)
     {
         Log.Error($"Encounter Error: {message}");
@@ -177,11 +168,9 @@ public sealed class PullToOBSPlugin : IDalamudPlugin
         _indicator.Dispose();
 
         ObsController.ErrorOccurred -= OnOBSError;
-        IINACTClient.ErrorOccurred -= OnIINACTError;
         EncounterManager.ErrorOccurred -= OnEncounterError;
 
         EncounterManager.Dispose();
-        IINACTClient.Dispose();
         ObsController.Dispose();
 
         if (_ownsIndicatorFont)

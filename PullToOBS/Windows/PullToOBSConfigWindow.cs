@@ -151,7 +151,7 @@ public class PullToOBSConfigWindow : Window, IDisposable
         ImGui.TextWrapped(
             "When configured and started, the plugin will:" +
             "\n1. Connect to OBS and start the Replay Buffer" +
-            "\n2. Listen for FFXIV encounters via IINACT" +
+            "\n2. Detect combat state changes via Dalamud" +
             "\n3. On encounter start: Start recording, wait 5s, save replay buffer" +
             "\n4. On encounter end: Wait 5s overlap, stop recording" +
             "\n\nResult: Two files per encounter — replay buffer clip (prepull) + full recording.");

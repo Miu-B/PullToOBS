@@ -1,8 +1,8 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
+using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Plugin.Services;
-using PullToOBS.Models;
 
 namespace PullToOBS;
 
@@ -15,7 +15,7 @@ public class EncounterManager : IDisposable
     private static readonly TimeSpan CombatEndGracePeriod = TimeSpan.FromSeconds(5);
 
     private readonly IOBSController _obs;
-    private readonly IIINACTClient _iinact;
+    private readonly ICondition _condition;
     private readonly IPluginLog _log;
 
     private bool _isInCombat;
@@ -31,18 +31,22 @@ public class EncounterManager : IDisposable
     public event Action<string>? ErrorOccurred;
     public event Action? StateChanged;
 
-    public EncounterManager(IOBSController obs, IIINACTClient iinact, IPluginLog log)
+    public EncounterManager(IOBSController obs, ICondition condition, IPluginLog log)
     {
         _obs = obs;
-        _iinact = iinact;
+        _condition = condition;
         _log = log;
         _disposalCts = new CancellationTokenSource();
-
-        _iinact.CombatStateChanged += OnCombatStateChanged;
     }
 
-    private void OnCombatStateChanged(InCombatPayload payload)
+    /// <summary>
+    /// Call this every frame from the game thread (Framework.Update).
+    /// Polls the Dalamud condition flag for combat state changes.
+    /// </summary>
+    public void Update()
     {
+        var inCombat = _condition[ConditionFlag.InCombat];
+
         CancellationTokenSource? stopCtsToCancel = null;
         bool shouldStart = false;
         bool shouldEnd = false;
@@ -52,10 +56,11 @@ public class EncounterManager : IDisposable
         {
             if (_isDisposed) return;
 
-            var newCombatState = payload.InGameCombat || payload.InActCombat;
-            _log.Debug($"[Encounter] CombatStateChanged: inGame={payload.InGameCombat}, inACT={payload.InActCombat} => newState={newCombatState}, wasInCombat={_isInCombat}");
+            if (inCombat == _isInCombat) return;
 
-            if (newCombatState && !_isInCombat)
+            _log.Debug($"[Encounter] Combat state changed: inCombat={inCombat}, wasInCombat={_isInCombat}");
+
+            if (inCombat && !_isInCombat)
             {
                 // Entering combat -- cancel any pending stop
                 stopCtsToCancel = _pendingStopCts;
@@ -63,13 +68,13 @@ public class EncounterManager : IDisposable
                 shouldStart = true;
                 _log.Debug("[Encounter] Entering combat, will start encounter");
             }
-            else if (!newCombatState && _isInCombat)
+            else if (!inCombat && _isInCombat)
             {
                 shouldEnd = true;
                 _log.Debug("[Encounter] Leaving combat, will end encounter");
             }
 
-            _isInCombat = newCombatState;
+            _isInCombat = inCombat;
             fireStateChanged = true;
         }
 
@@ -199,8 +204,6 @@ public class EncounterManager : IDisposable
         {
             if (_isDisposed) return;
             _isDisposed = true;
-
-            _iinact.CombatStateChanged -= OnCombatStateChanged;
 
             pendingCts = _pendingStopCts;
             _pendingStopCts = null;

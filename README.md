@@ -2,12 +2,12 @@
 
 ![PullToOBS icon](PullToOBS/PullToOBS.png)
 
-A Dalamud plugin that automatically controls OBS recording during FFXIV encounters. Captures a replay buffer clip before pulls and full encounter recordings via OBS WebSocket v5 and IINACT.
+A Dalamud plugin that automatically controls OBS recording during FFXIV encounters. Captures a replay buffer clip before pulls and full encounter recordings via OBS WebSocket v5.
 
 ## Features
 
 * **Automatic Recording**
-  * Starts OBS recording when combat begins (detected via IINACT IPC)
+  * Starts OBS recording when combat begins (detected via Dalamud)
   * Stops recording after a 5-second grace period when combat ends
   * Re-entering combat cancels the pending stop, producing one continuous recording
 
@@ -34,7 +34,6 @@ A Dalamud plugin that automatically controls OBS recording during FFXIV encounte
 ## Requirements
 
 * [OBS Studio](https://obsproject.com/) with WebSocket v5 enabled (Settings > WebSocket Server)
-* [IINACT](https://github.com/marzent/IINACT) Dalamud plugin (provides combat event data)
 * Replay Buffer configured in OBS (Settings > Output > Replay Buffer) for prepull capture
 
 ## Installation
@@ -53,13 +52,12 @@ Then open the Plugin Installer (`/xlplugins`) and search for **PullToOBS**.
 
 ### Getting Started
 
-1. Install and enable IINACT in the Dalamud plugin installer
-2. Enable OBS WebSocket v5 (OBS > Tools > WebSocket Server Settings)
-3. Configure Replay Buffer in OBS (Settings > Output > Replay Buffer)
-4. Open PullToOBS config with `/pulltoobs` or `/pto`
-5. Enter your OBS WebSocket URL and password, then click Connect
-6. The indicator will appear on screen showing connection status
-7. Enter combat -- recording starts automatically
+1. Enable OBS WebSocket v5 (OBS > Tools > WebSocket Server Settings)
+2. Configure Replay Buffer in OBS (Settings > Output > Replay Buffer)
+3. Open PullToOBS config with `/pulltoobs` or `/pto`
+4. Enter your OBS WebSocket URL and password, then click Connect
+5. The indicator will appear on screen showing connection status
+6. Enter combat -- recording starts automatically
 
 ### Commands
 
