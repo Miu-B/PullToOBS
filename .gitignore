@@ -1,0 +1,9 @@
+testing/
+DalamudPluginsD17
+bin/
+obj/
+
+# Local symlinks to sibling repos
+IINACT
+rec-cue
+termact

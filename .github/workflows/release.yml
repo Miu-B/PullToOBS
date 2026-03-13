@@ -1,0 +1,46 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - '*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    runs-on: windows-latest
+
+    env:
+      DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+
+    steps:
+      - name: Checkout and initialise
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Dalamud
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri https://goatcorp.github.io/dalamud-distrib/stg/latest.zip -OutFile ./latest.zip
+          Expand-Archive -Path ./latest.zip "$env:AppData\XIVLauncher\addon\Hooks\dev" -Force
+
+      - name: Restore project dependencies
+        run: dotnet restore --verbosity normal
+
+      - name: Build Release
+        run: dotnet build --no-restore --verbosity normal --configuration Release -p:Version=${{ github.ref_name }}
+
+      - name: Run tests
+        run: dotnet test --configuration Release --no-build --verbosity normal
+
+      - name: Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: PullToOBS/bin/Release/PullToOBS/latest.zip
+          name: PullToOBS ${{ github.ref_name }}
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

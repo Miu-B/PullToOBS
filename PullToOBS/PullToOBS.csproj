@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project Sdk="Dalamud.NET.Sdk/14.0.1">
+  <PropertyGroup>
+    <RootNamespace>PullToOBS</RootNamespace>
+  </PropertyGroup>
+  <PropertyGroup>
+    <Version>0.1.0.0</Version>
+    <PackageProjectUrl>https://github.com/Miu-B/PullToOBS</PackageProjectUrl>
+    <PackageLicenseExpression>AGPL-3.0-or-later</PackageLicenseExpression>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="obs-websocket-dotnet" Version="5.0.1">
+      <ExcludeAssets>build</ExcludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <!-- Newtonsoft.Json is provided by Dalamud at runtime (Private="false" via Dalamud.NET.Sdk).
+       Prevent the transitive copy from obs-websocket-dotnet from being deployed alongside our
+       plugin, which would cause a dual-assembly type mismatch with Dalamud's IPC marshalling. -->
+  <Target Name="ExcludeDalamudProvidedAssemblies" AfterTargets="ResolvePackageAssets">
+    <ItemGroup>
+      <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)" Condition="'%(Filename)' == 'Newtonsoft.Json'" />
+      <RuntimeCopyLocalItems Remove="@(RuntimeCopyLocalItems)" Condition="'%(NuGetPackageId)' == 'Newtonsoft.Json'" />
+    </ItemGroup>
+  </Target>
+
+  <ItemGroup>
+    <Content
+        Include="PullToOBS.png"
+        Link="images/icon.png"
+        CopyToOutputDirectory="PreserveNewest"
+        Visible="false"
+    />
+  </ItemGroup>
+
+</Project>

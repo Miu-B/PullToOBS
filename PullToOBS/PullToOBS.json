@@ -1,0 +1,16 @@
+{
+  "Author": "Miu-B",
+  "Name": "PullToOBS",
+  "Punchline": "Automated OBS recording manager for FFXIV encounters.",
+  "Description": "A Dalamud plugin that automatically controls OBS recording during FFXIV encounters. Captures 30-second replay buffer before pulls and full encounter recordings. Requires OBS WebSocket v5 and IINACT. Use /pulltoobs or /pto to configure.",
+  "ApplicableVersion": "any",
+  "RepoUrl": "https://github.com/Miu-B/PullToOBS",
+  "IconUrl": "https://raw.githubusercontent.com/Miu-B/PullToOBS/master/PullToOBS/PullToOBS.png",
+  "Tags": [
+    "obs",
+    "recording",
+    "encounter",
+    "iinact",
+    "automation"
+  ]
+}

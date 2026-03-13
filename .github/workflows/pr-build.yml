@@ -1,0 +1,43 @@
+name: PR Builder for PullToOBS
+
+on:
+  pull_request:
+    branches: [ master ]
+
+jobs:
+
+  build:
+    runs-on: windows-2022
+
+    env:
+      Solution_Name: PullToOBS
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v5
+
+    - name: Install .NET
+      uses: actions/setup-dotnet@v5
+      with:
+        dotnet-version: 10.0.x
+
+    - name: Download Dalamud
+      run: |
+        Invoke-WebRequest -Uri https://goatcorp.github.io/dalamud-distrib/latest.zip -OutFile latest.zip
+        Expand-Archive -Force latest.zip "$env:AppData\XIVLauncher\addon\Hooks\dev"
+
+    - name: Build with dotnet
+      run: dotnet build --configuration Release
+
+    - name: Run tests
+      run: dotnet test --configuration Release --no-build --verbosity normal
+
+    - name: Store artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: PullToOBS
+        path: |
+            PullToOBS\bin\Release\PullToOBS\latest.zip
+            PullToOBS\bin\Release\PullToOBS\*.json
+        if-no-files-found: error
+        retention-days: 1
