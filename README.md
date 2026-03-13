@@ -39,7 +39,15 @@ A Dalamud plugin that automatically controls OBS recording during FFXIV encounte
 
 ## Installation
 
-PullToOBS is available in the Dalamud plugin installer. Open the Plugin Installer in-game and search for **PullToOBS**.
+PullToOBS is not yet available in the standard Dalamud plugin repository and must be installed from my third party repository.
+
+To install it, add the following URL in Dalamud settings (`/xlsettings` > Experimental > Custom Plugin Repositories):
+
+```
+https://raw.githubusercontent.com/Miu-B/PullToOBS/master/repo.json
+```
+
+Then open the Plugin Installer (`/xlplugins`) and search for **PullToOBS**.
 
 ## How To Use
 
