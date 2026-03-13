@@ -2,22 +2,24 @@
 
 ![PullToOBS icon](PullToOBS/PullToOBS.png)
 
-A Dalamud plugin that automatically controls OBS recording during FFXIV encounters. Captures a replay buffer clip before pulls and full encounter recordings via OBS WebSocket v5.
+If you're anything like me, you've had that moment — the pull goes perfectly, you finally clear, and then you realise OBS was sitting there doing absolutely nothing because you forgot to press Record. Again.
+
+I already had [rec-cue](https://github.com/Miu-B/rec-cue) to show me an in-game indicator when recording was active, which was great for noticing the problem... but not so great at *preventing* it. So I built PullToOBS: a Dalamud plugin that talks to OBS over WebSocket v5, starts recording the moment you enter combat, and saves a replay buffer clip of the prepull for good measure. No more "I forgot to record" sadness.
 
 ## Features
 
-* **Automatic Recording**
+* **Automatic Recording** -- the whole point
   * Starts OBS recording when combat begins (detected via Dalamud)
   * Stops recording after a 5-second grace period when combat ends
-  * Re-entering combat cancels the pending stop, producing one continuous recording
+  * If you re-enter combat during that grace period, the pending stop is cancelled and you get one continuous recording instead of two fragments
 
-* **Replay Buffer Integration**
-  * Automatically starts the OBS replay buffer on connect
-  * Saves the replay buffer 5 seconds into the encounter to capture the prepull
-  * Result: two files per encounter -- a replay buffer clip (prepull) and a full recording
+* **Replay Buffer Integration** -- never miss the prepull
+  * Automatically starts the OBS replay buffer when the plugin connects
+  * Saves the replay buffer 5 seconds into the encounter, capturing everything that happened before the pull
+  * You'll end up with two files per encounter: a replay buffer clip (prepull) and a full recording
 
-* **Visual Status Indicator**
-  * Always-visible on-screen indicator showing OBS state
+* **Visual Status Indicator** -- know what OBS is doing at a glance
+  * Always-visible on-screen dot showing the current OBS state
   * **Red pulsing dot**: Recording in progress
   * **Orange dot**: Replay buffer active (connected, not recording)
   * **Green dot**: Connected to OBS
@@ -29,7 +31,7 @@ A Dalamud plugin that automatically controls OBS recording during FFXIV encounte
   * OBS WebSocket URL and password
   * Optional auto-connect on plugin start
   * Indicator position, scale, and visibility settings
-  * Persistent configuration
+  * All settings are saved automatically
 
 ## Requirements
 
@@ -38,26 +40,26 @@ A Dalamud plugin that automatically controls OBS recording during FFXIV encounte
 
 ## Installation
 
-PullToOBS is not yet available in the standard Dalamud plugin repository and must be installed from my third party repository.
+PullToOBS isn't in the standard Dalamud plugin repository yet, so you'll need to add it as a third-party repo.
 
-To install it, add the following URL in Dalamud settings (`/xlsettings` > Experimental > Custom Plugin Repositories):
+Add this URL in Dalamud settings (`/xlsettings` > Experimental > Custom Plugin Repositories):
 
 ```
 https://raw.githubusercontent.com/Miu-B/PullToOBS/master/repo.json
 ```
 
-Then open the Plugin Installer (`/xlplugins`) and search for **PullToOBS**.
+After that, open the Plugin Installer (`/xlplugins`), search for **PullToOBS**, and install it.
 
 ## How To Use
 
 ### Getting Started
 
 1. Enable OBS WebSocket v5 (OBS > Tools > WebSocket Server Settings)
-2. Configure Replay Buffer in OBS (Settings > Output > Replay Buffer)
+2. Set up a Replay Buffer in OBS (Settings > Output > Replay Buffer) -- this is what captures the prepull
 3. Open PullToOBS config with `/pulltoobs` or `/pto`
 4. Enter your OBS WebSocket URL and password, then click Connect
-5. The indicator will appear on screen showing connection status
-6. Enter combat -- recording starts automatically
+5. The indicator shows up on screen -- you're good to go
+6. Enter combat and recording starts automatically
 
 ### Commands
 
@@ -74,7 +76,7 @@ Then open the Plugin Installer (`/xlplugins`) and search for **PullToOBS**.
 
 ## Configuration
 
-All settings are saved automatically:
+All settings are saved automatically, so you can just set things up once and forget about it (forgetting is what we're good at, after all):
 
 * **WebSocket URL** - OBS WebSocket server address (default: `ws://localhost:4455`)
 * **Password** - OBS WebSocket server password
