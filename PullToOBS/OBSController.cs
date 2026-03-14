@@ -216,14 +216,32 @@ public class OBSController : IOBSController
     public void StopRecording()
     {
         _log.Debug($"[OBS] StopRecording called: IsConnected={_obs.IsConnected}, IsRecording={_isRecording}");
-        ExecuteObsAction(
-            "StopRecording",
-            () =>
-            {
-                _obs.StopRecord();
-                _isRecording = false;
-                RecordingStateChanged?.Invoke();
-            });
+
+        if (!_obs.IsConnected)
+        {
+            _log.Debug("[OBS] StopRecording: not connected, skipping");
+            return;
+        }
+
+        try
+        {
+            _obs.StopRecord();
+            _isRecording = false;
+            RecordingStateChanged?.Invoke();
+            _log.Debug("[OBS] StopRecording: succeeded");
+        }
+        catch (Exception ex) when (IsNotRecordingError(ex))
+        {
+            _log.Debug("[OBS] StopRecording: recording was already stopped (501), treating as success");
+            _isRecording = false;
+            RecordingStateChanged?.Invoke();
+        }
+        catch (Exception ex)
+        {
+            _log.Error($"[OBS] StopRecording failed: {ex.GetType().Name}: {ex.Message}");
+            ErrorOccurred?.Invoke($"Failed to StopRecording: {ex.Message}");
+            throw;
+        }
     }
 
     /// <summary>
@@ -260,6 +278,16 @@ public class OBSController : IOBSController
         // Check both the message and inner exception for robustness.
         return ex.Message.Contains("500") ||
                (ex.InnerException?.Message.Contains("500") ?? false);
+    }
+
+    /// <summary>
+    /// Checks if the exception indicates the output is not active.
+    /// OBS WebSocket uses error code 501 for "not recording/streaming" conditions.
+    /// </summary>
+    private static bool IsNotRecordingError(Exception ex)
+    {
+        return ex.Message.Contains("501") ||
+               (ex.InnerException?.Message.Contains("501") ?? false);
     }
 
     private void OnConnected(object? sender, EventArgs e)

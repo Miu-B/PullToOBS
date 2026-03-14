@@ -169,6 +169,14 @@ public class EncounterManager : IDisposable
             using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cts.Token, disposalToken);
             await Task.Delay(CombatEndGracePeriod, linkedCts.Token);
 
+            // Re-check after grace period -- recording may have stopped externally
+            if (!_obs.IsConnected || !_obs.IsRecording)
+            {
+                _log.Debug("[Encounter] HandleEncounterEnd: recording already stopped during grace period, firing EncounterEnded without stopping");
+                EncounterEnded?.Invoke();
+                return;
+            }
+
             _log.Debug("[Encounter] HandleEncounterEnd: calling StopRecording");
             _obs.StopRecording();
             _log.Debug("[Encounter] HandleEncounterEnd: StopRecording called successfully");

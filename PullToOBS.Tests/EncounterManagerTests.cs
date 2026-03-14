@@ -254,4 +254,53 @@ public class EncounterManagerTests : IDisposable
         // StopRecording should be called exactly once (from the final leave)
         _obs.Received(1).StopRecording();
     }
+
+    [Fact]
+    public async Task LeavingCombat_RecordingStopsDuringGracePeriod_DoesNotCallStopRecording()
+    {
+        _obs.IsRecording.Returns(true);
+
+        // Enter combat
+        SetCombatState(true);
+        await Task.Delay(200);
+
+        // Leave combat -- grace period starts
+        SetCombatState(false);
+
+        // Simulate recording stopping externally during the grace period
+        await Task.Delay(1000);
+        _obs.IsRecording.Returns(false);
+
+        // Wait for full grace period to elapse
+        await Task.Delay(5500);
+
+        // StopRecording should NOT have been called -- recording was already stopped
+        _obs.DidNotReceive().StopRecording();
+    }
+
+    [Fact]
+    public async Task LeavingCombat_RecordingStopsDuringGracePeriod_FiresEncounterEnded()
+    {
+        _obs.IsRecording.Returns(true);
+
+        var encounterEndedFired = false;
+        _sut.EncounterEnded += () => encounterEndedFired = true;
+
+        // Enter combat
+        SetCombatState(true);
+        await Task.Delay(200);
+
+        // Leave combat -- grace period starts
+        SetCombatState(false);
+
+        // Simulate recording stopping externally during the grace period
+        await Task.Delay(1000);
+        _obs.IsRecording.Returns(false);
+
+        // Wait for full grace period to elapse
+        await Task.Delay(5500);
+
+        // EncounterEnded should still fire even though we didn't call StopRecording
+        Assert.True(encounterEndedFired);
+    }
 }
