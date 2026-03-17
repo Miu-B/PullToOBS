@@ -1,4 +1,5 @@
 using System;
+using System.Threading.Tasks;
 using Dalamud.Game.Command;
 using Dalamud.IoC;
 using Dalamud.Interface.FontIdentifier;
@@ -68,7 +69,7 @@ public sealed class PullToOBSPlugin : IDalamudPlugin
         Framework.Update += OnFrameworkUpdate;
 
         if (Configuration.AutoConnectOnStart)
-            _ = ObsController.ConnectAsync(Configuration.ObsWebSocketUrl, Configuration.ObsPassword);
+            _ = TryAutoConnectAsync();
 
         Log.Information("===PullToOBS plugin loaded successfully===");
     }
@@ -105,6 +106,22 @@ public sealed class PullToOBSPlugin : IDalamudPlugin
     private void OnFrameworkUpdate(IFramework framework)
     {
         EncounterManager.Update();
+    }
+
+    /// <summary>
+    /// Wraps auto-connect in a try/catch so the fire-and-forget task is observed.
+    /// Errors are already handled via the ErrorOccurred event and logged in ConnectAsync.
+    /// </summary>
+    private async Task TryAutoConnectAsync()
+    {
+        try
+        {
+            await ObsController.ConnectAsync(Configuration.ObsWebSocketUrl, Configuration.ObsPassword);
+        }
+        catch
+        {
+            // Already handled via ErrorOccurred event and logged in ConnectAsync.
+        }
     }
 
     private void DrawUi()

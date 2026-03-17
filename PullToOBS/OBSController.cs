@@ -11,11 +11,15 @@ namespace PullToOBS;
 public class OBSController : IOBSController
 {
     private const int StatePollingIntervalMs = 500;
+    private const int PollFailureEscalationThreshold = 10;
 
     private readonly OBSWebsocket _obs;
     private readonly IPluginLog _log;
     private bool _isDisposed;
     private System.Timers.Timer? _statePollingTimer;
+
+    // Tracks consecutive polling failures for escalation.
+    private int _consecutivePollFailures;
 
     // Volatile ensures cross-thread visibility (timer thread writes, UI thread reads).
     private volatile bool _isRecording;
@@ -56,6 +60,7 @@ public class OBSController : IOBSController
 
         try
         {
+            _log.Information($"[OBS] Connecting to {url} (password {(string.IsNullOrEmpty(password) ? "not set" : "set")})...");
             _obs.ConnectAsync(url, password);
             await tcs.Task;
 
@@ -63,9 +68,11 @@ public class OBSController : IOBSController
             if (_isReplayBufferConfigured)
                 TryStartReplayBuffer();
             StartStatePolling();
+            _log.Information("[OBS] Connected to OBS successfully");
         }
         catch (Exception ex)
         {
+            _log.Error($"[OBS] Failed to connect: {ex}");
             ErrorOccurred?.Invoke($"Failed to connect to OBS: {ex.Message}");
             throw;
         }
@@ -87,6 +94,8 @@ public class OBSController : IOBSController
     {
         if (!_obs.IsConnected) return;
 
+        bool anyFailure = false;
+
         try
         {
             var recordStatus = _obs.GetRecordStatus();
@@ -98,6 +107,7 @@ public class OBSController : IOBSController
         catch (Exception ex)
         {
             _log.Debug($"[OBS] PollState recording error: {ex.GetType().Name}: {ex.Message}");
+            anyFailure = true;
         }
 
         try
@@ -110,11 +120,28 @@ public class OBSController : IOBSController
         catch (Exception ex)
         {
             _log.Debug($"[OBS] PollState replay buffer error: {ex.GetType().Name}: {ex.Message}");
+            anyFailure = true;
+        }
+
+        if (anyFailure)
+        {
+            _consecutivePollFailures++;
+            if (_consecutivePollFailures >= PollFailureEscalationThreshold)
+            {
+                _log.Warning($"[OBS] State polling has failed {_consecutivePollFailures} consecutive times, OBS may be unreachable");
+                ErrorOccurred?.Invoke("OBS state polling is failing repeatedly — OBS may be unreachable");
+                _consecutivePollFailures = 0;
+            }
+        }
+        else
+        {
+            _consecutivePollFailures = 0;
         }
     }
 
     public void Disconnect()
     {
+        _log.Information("[OBS] Disconnecting from OBS (user-initiated)");
         StopStatePolling();
 
         if (_obs.IsConnected)
@@ -153,7 +180,7 @@ public class OBSController : IOBSController
             _obs.StartReplayBuffer();
             _isReplayBufferActive = true;
             ReplayBufferStateChanged?.Invoke();
-            _log.Debug("[OBS] TryStartReplayBuffer: started successfully");
+            _log.Information("[OBS] TryStartReplayBuffer: started successfully");
         }
         catch (Exception ex) when (IsAlreadyRunningError(ex))
         {
@@ -194,7 +221,7 @@ public class OBSController : IOBSController
 
     public void SaveReplayBuffer()
     {
-        _log.Debug($"[OBS] SaveReplayBuffer called: IsConnected={_obs.IsConnected}, IsReplayBufferActive={_isReplayBufferActive}");
+        _log.Information($"[OBS] SaveReplayBuffer called: IsConnected={_obs.IsConnected}, IsReplayBufferActive={_isReplayBufferActive}");
         ExecuteObsAction(
             "SaveReplayBuffer",
             () => _obs.SaveReplayBuffer());
@@ -202,7 +229,7 @@ public class OBSController : IOBSController
 
     public void StartRecording()
     {
-        _log.Debug($"[OBS] StartRecording called: IsConnected={_obs.IsConnected}, IsRecording={_isRecording}");
+        _log.Information($"[OBS] StartRecording called: IsConnected={_obs.IsConnected}, IsRecording={_isRecording}");
         ExecuteObsAction(
             "StartRecording",
             () =>
@@ -215,7 +242,7 @@ public class OBSController : IOBSController
 
     public void StopRecording()
     {
-        _log.Debug($"[OBS] StopRecording called: IsConnected={_obs.IsConnected}, IsRecording={_isRecording}");
+        _log.Information($"[OBS] StopRecording called: IsConnected={_obs.IsConnected}, IsRecording={_isRecording}");
 
         if (!_obs.IsConnected)
         {
@@ -228,17 +255,17 @@ public class OBSController : IOBSController
             _obs.StopRecord();
             _isRecording = false;
             RecordingStateChanged?.Invoke();
-            _log.Debug("[OBS] StopRecording: succeeded");
+            _log.Information("[OBS] StopRecording: succeeded");
         }
         catch (Exception ex) when (IsNotRecordingError(ex))
         {
-            _log.Debug("[OBS] StopRecording: recording was already stopped (501), treating as success");
+            _log.Information("[OBS] StopRecording: recording was already stopped (501), treating as success");
             _isRecording = false;
             RecordingStateChanged?.Invoke();
         }
         catch (Exception ex)
         {
-            _log.Error($"[OBS] StopRecording failed: {ex.GetType().Name}: {ex.Message}");
+            _log.Error($"[OBS] StopRecording failed: {ex}");
             ErrorOccurred?.Invoke($"Failed to StopRecording: {ex.Message}");
             throw;
         }
@@ -258,11 +285,11 @@ public class OBSController : IOBSController
         try
         {
             action();
-            _log.Debug($"[OBS] {operationName}: succeeded");
+            _log.Information($"[OBS] {operationName}: succeeded");
         }
         catch (Exception ex)
         {
-            _log.Error($"[OBS] {operationName} failed: {ex.GetType().Name}: {ex.Message}");
+            _log.Error($"[OBS] {operationName} failed: {ex}");
             ErrorOccurred?.Invoke($"Failed to {operationName}: {ex.Message}");
             throw;
         }
@@ -292,13 +319,16 @@ public class OBSController : IOBSController
 
     private void OnConnected(object? sender, EventArgs e)
     {
+        _log.Information("[OBS] WebSocket connected event received");
         ConnectionStateChanged?.Invoke();
     }
 
     private void OnDisconnected(object? sender, ObsDisconnectionInfo e)
     {
+        _log.Warning($"[OBS] Disconnected from OBS. Reason: {e.DisconnectReason ?? "unknown"}");
         _isRecording = false;
         _isReplayBufferActive = false;
+        _consecutivePollFailures = 0;
         StopStatePolling();
         ConnectionStateChanged?.Invoke();
     }

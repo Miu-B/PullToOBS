@@ -58,7 +58,7 @@ public class EncounterManager : IDisposable
 
             if (inCombat == _isInCombat) return;
 
-            _log.Debug($"[Encounter] Combat state changed: inCombat={inCombat}, wasInCombat={_isInCombat}");
+            _log.Information($"[Encounter] Combat state changed: inCombat={inCombat}, wasInCombat={_isInCombat}");
 
             if (inCombat && !_isInCombat)
             {
@@ -66,12 +66,12 @@ public class EncounterManager : IDisposable
                 stopCtsToCancel = _pendingStopCts;
                 _pendingStopCts = null;
                 shouldStart = true;
-                _log.Debug("[Encounter] Entering combat, will start encounter");
+                _log.Information("[Encounter] Entering combat, will start encounter");
             }
             else if (!inCombat && _isInCombat)
             {
                 shouldEnd = true;
-                _log.Debug("[Encounter] Leaving combat, will end encounter");
+                _log.Information("[Encounter] Leaving combat, will end encounter");
             }
 
             _isInCombat = inCombat;
@@ -104,17 +104,17 @@ public class EncounterManager : IDisposable
 
         try
         {
-            _log.Debug($"[Encounter] HandleEncounterStart: obs.IsConnected={_obs.IsConnected}, obs.IsRecording={_obs.IsRecording}");
+            _log.Information($"[Encounter] HandleEncounterStart: obs.IsConnected={_obs.IsConnected}, obs.IsRecording={_obs.IsRecording}");
 
             if (!_obs.IsConnected)
             {
-                _log.Debug("[Encounter] HandleEncounterStart: OBS not connected, aborting");
+                _log.Warning("[Encounter] HandleEncounterStart: OBS not connected, aborting");
                 return;
             }
 
-            _log.Debug("[Encounter] HandleEncounterStart: calling StartRecording");
+            _log.Information("[Encounter] HandleEncounterStart: calling StartRecording");
             _obs.StartRecording();
-            _log.Debug("[Encounter] HandleEncounterStart: StartRecording called successfully");
+            _log.Information("[Encounter] HandleEncounterStart: StartRecording called successfully");
 
             // Save replay buffer after overlap delay to capture the prepull.
             // Cancellable via disposal token so we don't access disposed objects.
@@ -122,9 +122,9 @@ public class EncounterManager : IDisposable
 
             if (_obs.IsConnected && _obs.IsRecording && _obs.IsReplayBufferConfigured)
             {
-                _log.Debug("[Encounter] HandleEncounterStart: calling SaveReplayBuffer");
+                _log.Information("[Encounter] HandleEncounterStart: calling SaveReplayBuffer");
                 _obs.SaveReplayBuffer();
-                _log.Debug("[Encounter] HandleEncounterStart: SaveReplayBuffer called successfully");
+                _log.Information("[Encounter] HandleEncounterStart: SaveReplayBuffer called successfully");
             }
 
             EncounterStarted?.Invoke();
@@ -135,7 +135,7 @@ public class EncounterManager : IDisposable
         }
         catch (Exception ex)
         {
-            _log.Error($"[Encounter] HandleEncounterStart exception: {ex.GetType().Name}: {ex.Message}");
+            _log.Error($"[Encounter] HandleEncounterStart exception: {ex}");
             ErrorOccurred?.Invoke($"Error starting encounter: {ex.Message}");
         }
     }
@@ -155,41 +155,41 @@ public class EncounterManager : IDisposable
 
         try
         {
-            _log.Debug($"[Encounter] HandleEncounterEnd: obs.IsConnected={_obs.IsConnected}, obs.IsRecording={_obs.IsRecording}");
+            _log.Information($"[Encounter] HandleEncounterEnd: obs.IsConnected={_obs.IsConnected}, obs.IsRecording={_obs.IsRecording}");
 
             if (!_obs.IsConnected || !_obs.IsRecording)
             {
-                _log.Debug("[Encounter] HandleEncounterEnd: OBS not connected or not recording, firing EncounterEnded without stopping");
+                _log.Warning("[Encounter] HandleEncounterEnd: OBS not connected or not recording, firing EncounterEnded without stopping");
                 EncounterEnded?.Invoke();
                 return;
             }
 
             // Wait grace period -- cancelled if combat restarts or plugin disposes
-            _log.Debug("[Encounter] HandleEncounterEnd: waiting before stopping recording");
+            _log.Information("[Encounter] HandleEncounterEnd: waiting before stopping recording");
             using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cts.Token, disposalToken);
             await Task.Delay(CombatEndGracePeriod, linkedCts.Token);
 
             // Re-check after grace period -- recording may have stopped externally
             if (!_obs.IsConnected || !_obs.IsRecording)
             {
-                _log.Debug("[Encounter] HandleEncounterEnd: recording already stopped during grace period, firing EncounterEnded without stopping");
+                _log.Information("[Encounter] HandleEncounterEnd: recording already stopped during grace period, firing EncounterEnded without stopping");
                 EncounterEnded?.Invoke();
                 return;
             }
 
-            _log.Debug("[Encounter] HandleEncounterEnd: calling StopRecording");
+            _log.Information("[Encounter] HandleEncounterEnd: calling StopRecording");
             _obs.StopRecording();
-            _log.Debug("[Encounter] HandleEncounterEnd: StopRecording called successfully");
+            _log.Information("[Encounter] HandleEncounterEnd: StopRecording called successfully");
             EncounterEnded?.Invoke();
         }
         catch (OperationCanceledException)
         {
             // Combat restarted or plugin disposing -- continue recording, do not stop
-            _log.Debug("[Encounter] HandleEncounterEnd: cancelled (combat restarted or disposing), continuing recording");
+            _log.Information("[Encounter] HandleEncounterEnd: cancelled (combat restarted or disposing), continuing recording");
         }
         catch (Exception ex)
         {
-            _log.Error($"[Encounter] HandleEncounterEnd exception: {ex.GetType().Name}: {ex.Message}");
+            _log.Error($"[Encounter] HandleEncounterEnd exception: {ex}");
             ErrorOccurred?.Invoke($"Error ending encounter: {ex.Message}");
         }
         finally
