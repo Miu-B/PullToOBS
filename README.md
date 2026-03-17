@@ -68,6 +68,7 @@ After that, open the Plugin Installer (`/xlplugins`), search for **PullToOBS**, 
 ### Commands
 
 * `/pulltoobs` or `/pto` - Toggle the configuration window
+* `/pulltoobs obs` or `/pto obs` - Toggle OBS connection
 * `/pulltoobs show` or `/pto show` - Show the indicator
 * `/pulltoobs hide` or `/pto hide` - Hide the indicator
 

@@ -57,11 +57,11 @@ public sealed class PullToOBSPlugin : IDalamudPlugin
 
         CommandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
         {
-            HelpMessage = "Open PullToOBS configuration window"
+            HelpMessage = "Open PullToOBS configuration window. Use 'obs' to toggle OBS connection, 'show'/'hide' for the indicator."
         });
         CommandManager.AddHandler(CommandAlias, new CommandInfo(OnCommand)
         {
-            HelpMessage = "Open PullToOBS configuration window (alias)"
+            HelpMessage = "Open PullToOBS configuration window (alias). Use 'obs' to toggle OBS connection, 'show'/'hide' for the indicator."
         });
 
         PluginInterface.UiBuilder.Draw += DrawUi;
@@ -87,6 +87,10 @@ public sealed class PullToOBSPlugin : IDalamudPlugin
         {
             Configuration.HideIndicator = true;
             Configuration.Save();
+        }
+        else if (trimmedArgs == "obs")
+        {
+            _ = ToggleObsConnectionAsync();
         }
         else
         {
@@ -121,6 +125,31 @@ public sealed class PullToOBSPlugin : IDalamudPlugin
         catch
         {
             // Already handled via ErrorOccurred event and logged in ConnectAsync.
+        }
+    }
+
+    /// <summary>
+    /// Toggles the OBS WebSocket connection, printing feedback to chat.
+    /// Invoked by the "/pto obs" command.
+    /// </summary>
+    private async Task ToggleObsConnectionAsync()
+    {
+        if (ObsController.IsConnected)
+        {
+            ObsController.Disconnect();
+            ChatGui.Print("[PullToOBS] Disconnected from OBS");
+        }
+        else
+        {
+            try
+            {
+                await ObsController.ConnectAsync(Configuration.ObsWebSocketUrl, Configuration.ObsPassword);
+                ChatGui.Print("[PullToOBS] Connected to OBS");
+            }
+            catch (Exception ex)
+            {
+                ChatGui.Print($"[PullToOBS] Failed to connect to OBS: {ex.Message}");
+            }
         }
     }
 
