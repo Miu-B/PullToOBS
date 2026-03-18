@@ -1,6 +1,5 @@
 using System;
 using System.Threading;
-using System.Threading.Tasks;
 using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Plugin.Services;
 
@@ -19,10 +18,19 @@ public class EncounterManager : IDisposable
     private readonly IPluginLog _log;
 
     private bool _isInCombat;
-    private CancellationTokenSource? _pendingStopCts;
-    private CancellationTokenSource? _disposalCts;
     private readonly object _lock = new();
     private bool _isDisposed;
+
+    /// <summary>
+    /// Kernel-backed timer for the grace period before stopping recording.
+    /// Fires reliably regardless of thread pool pressure.
+    /// </summary>
+    private System.Timers.Timer? _gracePeriodTimer;
+
+    /// <summary>
+    /// Kernel-backed timer for the replay buffer save delay after starting recording.
+    /// </summary>
+    private System.Timers.Timer? _replayBufferTimer;
 
     public bool IsInCombat => _isInCombat;
 
@@ -36,7 +44,6 @@ public class EncounterManager : IDisposable
         _obs = obs;
         _condition = condition;
         _log = log;
-        _disposalCts = new CancellationTokenSource();
     }
 
     /// <summary>
@@ -47,7 +54,6 @@ public class EncounterManager : IDisposable
     {
         var inCombat = _condition[ConditionFlag.InCombat];
 
-        CancellationTokenSource? stopCtsToCancel = null;
         bool shouldStart = false;
         bool shouldEnd = false;
         bool fireStateChanged = false;
@@ -63,8 +69,7 @@ public class EncounterManager : IDisposable
             if (inCombat && !_isInCombat)
             {
                 // Entering combat -- cancel any pending stop
-                stopCtsToCancel = _pendingStopCts;
-                _pendingStopCts = null;
+                CancelGracePeriodTimer();
                 shouldStart = true;
                 _log.Information("[Encounter] Entering combat, will start encounter");
             }
@@ -82,44 +87,91 @@ public class EncounterManager : IDisposable
         if (fireStateChanged)
             StateChanged?.Invoke();
 
-        // Cancel outside the lock to avoid deadlock
-        stopCtsToCancel?.Cancel();
-        stopCtsToCancel?.Dispose();
-
         if (shouldStart)
-            _ = Task.Run(HandleEncounterStart);
+            HandleEncounterStart();
         else if (shouldEnd)
-            _ = Task.Run(HandleEncounterEnd);
+            HandleEncounterEnd();
     }
 
-    private async Task HandleEncounterStart()
+    /// <summary>
+    /// Starts recording immediately (off the game thread via ThreadPool.QueueUserWorkItem)
+    /// and schedules a replay buffer save after the configured delay.
+    /// </summary>
+    private void HandleEncounterStart()
     {
-        CancellationToken disposalToken;
+        // Cancel any pending replay buffer save from a previous encounter
+        lock (_lock)
+        {
+            CancelReplayBufferTimer();
+        }
 
+        ThreadPool.QueueUserWorkItem(_ =>
+        {
+            lock (_lock)
+            {
+                if (_isDisposed) return;
+            }
+
+            try
+            {
+                _log.Information($"[Encounter] HandleEncounterStart: obs.IsConnected={_obs.IsConnected}, obs.IsRecording={_obs.IsRecording}");
+
+                if (!_obs.IsConnected)
+                {
+                    _log.Warning("[Encounter] HandleEncounterStart: OBS not connected, aborting");
+                    return;
+                }
+
+                _log.Information("[Encounter] HandleEncounterStart: calling StartRecording");
+                _obs.StartRecording();
+                _log.Information("[Encounter] HandleEncounterStart: StartRecording called successfully");
+
+                // Schedule replay buffer save via a kernel-backed timer
+                ScheduleReplayBufferSave();
+            }
+            catch (Exception ex)
+            {
+                _log.Error($"[Encounter] HandleEncounterStart exception: {ex}");
+                ErrorOccurred?.Invoke($"Error starting encounter: {ex.Message}");
+            }
+        });
+    }
+
+    /// <summary>
+    /// Schedules a replay buffer save after <see cref="ReplayBufferSaveDelay"/>.
+    /// Uses a kernel-backed timer to avoid thread pool scheduling delays.
+    /// </summary>
+    private void ScheduleReplayBufferSave()
+    {
         lock (_lock)
         {
             if (_isDisposed) return;
-            disposalToken = _disposalCts!.Token;
+
+            CancelReplayBufferTimer();
+
+            var timer = new System.Timers.Timer(ReplayBufferSaveDelay.TotalMilliseconds);
+            timer.AutoReset = false;
+            timer.Elapsed += OnReplayBufferTimerElapsed;
+            _replayBufferTimer = timer;
+            timer.Start();
+
+            _log.Information("[Encounter] HandleEncounterStart: scheduled replay buffer save");
+        }
+    }
+
+    /// <summary>
+    /// Fires when the replay buffer save delay has elapsed.
+    /// Runs on a thread pool thread (fired by the kernel timer), then saves the replay buffer.
+    /// </summary>
+    private void OnReplayBufferTimerElapsed(object? sender, System.Timers.ElapsedEventArgs e)
+    {
+        lock (_lock)
+        {
+            if (_isDisposed) return;
         }
 
         try
         {
-            _log.Information($"[Encounter] HandleEncounterStart: obs.IsConnected={_obs.IsConnected}, obs.IsRecording={_obs.IsRecording}");
-
-            if (!_obs.IsConnected)
-            {
-                _log.Warning("[Encounter] HandleEncounterStart: OBS not connected, aborting");
-                return;
-            }
-
-            _log.Information("[Encounter] HandleEncounterStart: calling StartRecording");
-            _obs.StartRecording();
-            _log.Information("[Encounter] HandleEncounterStart: StartRecording called successfully");
-
-            // Save replay buffer after overlap delay to capture the prepull.
-            // Cancellable via disposal token so we don't access disposed objects.
-            await Task.Delay(ReplayBufferSaveDelay, disposalToken);
-
             if (_obs.IsConnected && _obs.IsRecording && _obs.IsReplayBufferConfigured)
             {
                 _log.Information("[Encounter] HandleEncounterStart: calling SaveReplayBuffer");
@@ -129,46 +181,62 @@ public class EncounterManager : IDisposable
 
             EncounterStarted?.Invoke();
         }
-        catch (OperationCanceledException)
-        {
-            _log.Debug("[Encounter] HandleEncounterStart: cancelled (plugin disposing)");
-        }
         catch (Exception ex)
         {
-            _log.Error($"[Encounter] HandleEncounterStart exception: {ex}");
-            ErrorOccurred?.Invoke($"Error starting encounter: {ex.Message}");
+            _log.Error($"[Encounter] SaveReplayBuffer exception: {ex}");
+            ErrorOccurred?.Invoke($"Error saving replay buffer: {ex.Message}");
         }
     }
 
-    private async Task HandleEncounterEnd()
+    /// <summary>
+    /// Starts the grace period timer. When it fires, the recording will be stopped
+    /// (unless combat resumes first, which cancels the timer).
+    /// </summary>
+    private void HandleEncounterEnd()
     {
-        CancellationTokenSource cts;
-        CancellationToken disposalToken;
-
         lock (_lock)
         {
             if (_isDisposed) return;
-            cts = new CancellationTokenSource();
-            _pendingStopCts = cts;
-            disposalToken = _disposalCts!.Token;
-        }
 
-        try
-        {
             _log.Information($"[Encounter] HandleEncounterEnd: obs.IsConnected={_obs.IsConnected}, obs.IsRecording={_obs.IsRecording}");
 
             if (!_obs.IsConnected || !_obs.IsRecording)
             {
                 _log.Warning("[Encounter] HandleEncounterEnd: OBS not connected or not recording, firing EncounterEnded without stopping");
-                EncounterEnded?.Invoke();
+                // Fire outside the lock below
+            }
+            else
+            {
+                _log.Information("[Encounter] HandleEncounterEnd: starting grace period timer");
+
+                CancelGracePeriodTimer();
+
+                var timer = new System.Timers.Timer(CombatEndGracePeriod.TotalMilliseconds);
+                timer.AutoReset = false;
+                timer.Elapsed += OnGracePeriodElapsed;
+                _gracePeriodTimer = timer;
+                timer.Start();
+
                 return;
             }
+        }
 
-            // Wait grace period -- cancelled if combat restarts or plugin disposes
-            _log.Information("[Encounter] HandleEncounterEnd: waiting before stopping recording");
-            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cts.Token, disposalToken);
-            await Task.Delay(CombatEndGracePeriod, linkedCts.Token);
+        EncounterEnded?.Invoke();
+    }
 
+    /// <summary>
+    /// Fires when the grace period has elapsed without combat resuming.
+    /// Runs on a thread pool thread (fired by the kernel timer), then stops the recording.
+    /// </summary>
+    private void OnGracePeriodElapsed(object? sender, System.Timers.ElapsedEventArgs e)
+    {
+        lock (_lock)
+        {
+            if (_isDisposed) return;
+        }
+
+        try
+        {
             // Re-check after grace period -- recording may have stopped externally
             if (!_obs.IsConnected || !_obs.IsRecording)
             {
@@ -182,49 +250,47 @@ public class EncounterManager : IDisposable
             _log.Information("[Encounter] HandleEncounterEnd: StopRecording called successfully");
             EncounterEnded?.Invoke();
         }
-        catch (OperationCanceledException)
-        {
-            // Combat restarted or plugin disposing -- continue recording, do not stop
-            _log.Information("[Encounter] HandleEncounterEnd: cancelled (combat restarted or disposing), continuing recording");
-        }
         catch (Exception ex)
         {
             _log.Error($"[Encounter] HandleEncounterEnd exception: {ex}");
             ErrorOccurred?.Invoke($"Error ending encounter: {ex.Message}");
         }
-        finally
+    }
+
+    /// <summary>Cancels and disposes the grace period timer if active. Must be called under lock.</summary>
+    private void CancelGracePeriodTimer()
+    {
+        if (_gracePeriodTimer != null)
         {
-            lock (_lock)
-            {
-                if (ReferenceEquals(_pendingStopCts, cts))
-                    _pendingStopCts = null;
-            }
-            cts.Dispose();
+            _log.Information("[Encounter] Grace period timer cancelled");
+            _gracePeriodTimer.Stop();
+            _gracePeriodTimer.Elapsed -= OnGracePeriodElapsed;
+            _gracePeriodTimer.Dispose();
+            _gracePeriodTimer = null;
+        }
+    }
+
+    /// <summary>Cancels and disposes the replay buffer timer if active. Must be called under lock.</summary>
+    private void CancelReplayBufferTimer()
+    {
+        if (_replayBufferTimer != null)
+        {
+            _replayBufferTimer.Stop();
+            _replayBufferTimer.Elapsed -= OnReplayBufferTimerElapsed;
+            _replayBufferTimer.Dispose();
+            _replayBufferTimer = null;
         }
     }
 
     public void Dispose()
     {
-        CancellationTokenSource? pendingCts;
-        CancellationTokenSource? disposalCts;
-
         lock (_lock)
         {
             if (_isDisposed) return;
             _isDisposed = true;
 
-            pendingCts = _pendingStopCts;
-            _pendingStopCts = null;
-
-            disposalCts = _disposalCts;
-            _disposalCts = null;
+            CancelGracePeriodTimer();
+            CancelReplayBufferTimer();
         }
-
-        // Cancel all pending operations so background tasks exit promptly
-        disposalCts?.Cancel();
-        disposalCts?.Dispose();
-
-        pendingCts?.Cancel();
-        pendingCts?.Dispose();
     }
 }

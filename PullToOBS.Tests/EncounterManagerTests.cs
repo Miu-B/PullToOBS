@@ -58,8 +58,8 @@ public class EncounterManagerTests : IDisposable
     {
         SetCombatState(true);
 
-        // Give the background task a moment to run
-        await Task.Delay(200);
+        // Give the background work item a moment to run
+        await Task.Delay(500);
 
         Assert.True(_sut.IsInCombat);
         _obs.Received(1).StartRecording();
@@ -71,7 +71,7 @@ public class EncounterManagerTests : IDisposable
         _obs.IsConnected.Returns(false);
 
         SetCombatState(true);
-        await Task.Delay(200);
+        await Task.Delay(500);
 
         Assert.True(_sut.IsInCombat);
         _obs.DidNotReceive().StartRecording();
@@ -84,13 +84,13 @@ public class EncounterManagerTests : IDisposable
 
         // Enter combat
         SetCombatState(true);
-        await Task.Delay(200);
+        await Task.Delay(500);
 
         // Leave combat
         SetCombatState(false);
 
         // Should NOT have stopped yet (grace period is 5s, we only wait briefly)
-        await Task.Delay(200);
+        await Task.Delay(500);
         _obs.DidNotReceive().StopRecording();
 
         Assert.False(_sut.IsInCombat);
@@ -103,7 +103,7 @@ public class EncounterManagerTests : IDisposable
 
         // Enter -> Leave -> Re-enter combat quickly
         SetCombatState(true);
-        await Task.Delay(200);
+        await Task.Delay(500);
 
         SetCombatState(false);
         await Task.Delay(100);
@@ -141,7 +141,7 @@ public class EncounterManagerTests : IDisposable
     }
 
     [Fact]
-    public async Task EncounterStarted_FiresAfterRecordingStarts()
+    public async Task EncounterStarted_FiresAfterReplayBufferSaveDelay()
     {
         var fired = false;
         _sut.EncounterStarted += () => fired = true;
@@ -149,19 +149,19 @@ public class EncounterManagerTests : IDisposable
         SetCombatState(true);
 
         // EncounterStarted fires after the replay buffer save delay (5s)
-        await Task.Delay(6000);
+        await Task.Delay(6500);
 
         Assert.True(fired);
     }
 
     [Fact]
-    public async Task Dispose_CancelsInFlightOperations()
+    public async Task Dispose_CancelsInFlightTimers()
     {
-        // Enter combat to start a background task
+        // Enter combat to start background work and schedule replay buffer timer
         SetCombatState(true);
-        await Task.Delay(100);
+        await Task.Delay(500);
 
-        // Dispose while the replay buffer delay is pending
+        // Dispose while the replay buffer timer is pending
         _sut.Dispose();
 
         // Double dispose should be safe
@@ -170,7 +170,7 @@ public class EncounterManagerTests : IDisposable
         // Wait for what would have been the replay buffer delay
         await Task.Delay(6000);
 
-        // SaveReplayBuffer should NOT have been called because disposal cancelled it
+        // SaveReplayBuffer should NOT have been called because disposal cancelled the timer
         _obs.DidNotReceive().SaveReplayBuffer();
     }
 
@@ -196,7 +196,7 @@ public class EncounterManagerTests : IDisposable
         SetCombatState(true);
 
         // Wait for the replay buffer save delay (5s) + margin
-        await Task.Delay(6000);
+        await Task.Delay(6500);
 
         _obs.Received(1).SaveReplayBuffer();
     }
@@ -208,7 +208,7 @@ public class EncounterManagerTests : IDisposable
         _obs.IsRecording.Returns(true);
 
         SetCombatState(true);
-        await Task.Delay(6000);
+        await Task.Delay(6500);
 
         _obs.DidNotReceive().SaveReplayBuffer();
     }
@@ -222,7 +222,7 @@ public class EncounterManagerTests : IDisposable
         _sut.ErrorOccurred += msg => errorMsg = msg;
 
         SetCombatState(true);
-        await Task.Delay(200);
+        await Task.Delay(500);
 
         Assert.NotNull(errorMsg);
         Assert.Contains("OBS error", errorMsg);
@@ -235,7 +235,7 @@ public class EncounterManagerTests : IDisposable
 
         // Enter combat
         SetCombatState(true);
-        await Task.Delay(200);
+        await Task.Delay(500);
 
         // Leave combat briefly
         SetCombatState(false);
@@ -249,7 +249,7 @@ public class EncounterManagerTests : IDisposable
         SetCombatState(false);
 
         // Wait full grace period
-        await Task.Delay(6000);
+        await Task.Delay(6500);
 
         // StopRecording should be called exactly once (from the final leave)
         _obs.Received(1).StopRecording();
@@ -262,7 +262,7 @@ public class EncounterManagerTests : IDisposable
 
         // Enter combat
         SetCombatState(true);
-        await Task.Delay(200);
+        await Task.Delay(500);
 
         // Leave combat -- grace period starts
         SetCombatState(false);
@@ -288,7 +288,7 @@ public class EncounterManagerTests : IDisposable
 
         // Enter combat
         SetCombatState(true);
-        await Task.Delay(200);
+        await Task.Delay(500);
 
         // Leave combat -- grace period starts
         SetCombatState(false);
@@ -302,5 +302,45 @@ public class EncounterManagerTests : IDisposable
 
         // EncounterEnded should still fire even though we didn't call StopRecording
         Assert.True(encounterEndedFired);
+    }
+
+    [Fact]
+    public void LeavingCombat_WhenNotRecording_FiresEncounterEndedSynchronously()
+    {
+        // OBS is connected but not recording -- the pre-check in HandleEncounterEnd
+        // should fire EncounterEnded without starting the grace period timer.
+        _obs.IsRecording.Returns(false);
+
+        var encounterEndedFired = false;
+        _sut.EncounterEnded += () => encounterEndedFired = true;
+
+        // Enter then leave combat
+        SetCombatState(true);
+        SetCombatState(false);
+
+        // EncounterEnded fires synchronously (no timer involved)
+        Assert.True(encounterEndedFired);
+    }
+
+    [Fact]
+    public async Task Dispose_CancelsGracePeriodTimer()
+    {
+        _obs.IsRecording.Returns(true);
+
+        // Enter combat
+        SetCombatState(true);
+        await Task.Delay(500);
+
+        // Leave combat -- grace period timer starts
+        SetCombatState(false);
+
+        // Dispose while grace period is pending
+        _sut.Dispose();
+
+        // Wait for what would have been the grace period
+        await Task.Delay(6000);
+
+        // StopRecording should NOT have been called
+        _obs.DidNotReceive().StopRecording();
     }
 }
