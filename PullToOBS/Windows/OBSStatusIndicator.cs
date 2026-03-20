@@ -16,8 +16,6 @@ public class OBSStatusIndicator : Window, IDisposable
 
     private bool _dragging;
     private Vector2 _dragOffset;
-    private bool _styleVarsPushed;
-    private bool _shouldDraw;
 
     private const float DotSize = 22.0f;
 
@@ -41,7 +39,7 @@ public class OBSStatusIndicator : Window, IDisposable
         _clientState = clientState;
         _condition = condition;
 
-        // Keep the window permanently open; visibility is controlled in PreDraw/Draw.
+        // Keep the window permanently open; visibility is controlled via DrawConditions.
         IsOpen = true;
 
         // Disable Dalamud's built-in close button / collapse behavior.
@@ -74,22 +72,26 @@ public class OBSStatusIndicator : Window, IDisposable
     }
 
     /// <summary>
+    /// Controls whether the window is drawn this frame.
+    /// Returning false skips PreDraw, Draw, and PostDraw entirely.
+    /// </summary>
+    public override bool DrawConditions()
+    {
+        if (_plugin.Configuration.HideIndicator)
+            return false;
+
+        var unlocked = _plugin.ConfigWindow.IsOpen;
+        return IsInValidGameplayState() || unlocked;
+    }
+
+    /// <summary>
     /// Called before each Draw frame. Sets position, size, style, and updates Flags.
-    /// If the indicator should be hidden this frame, sets IsOpen = false temporarily.
+    /// Only runs when DrawConditions returns true.
     /// </summary>
     public override void PreDraw()
     {
-        _styleVarsPushed = false;
-        _shouldDraw = false;
-
-        var unlocked = _plugin.ConfigWindow.IsOpen;
-
-        if (_plugin.Configuration.HideIndicator || (!IsInValidGameplayState() && !unlocked))
-            return;
-
-        _shouldDraw = true;
-
         // Toggle NoInputs depending on whether the config window is open (unlock mode).
+        var unlocked = _plugin.ConfigWindow.IsOpen;
         Flags = unlocked ? BaseFlags : BaseFlags | ImGuiWindowFlags.NoInputs;
 
         var scale = _plugin.Configuration.IndicatorScale;
@@ -101,7 +103,6 @@ public class OBSStatusIndicator : Window, IDisposable
 
         ImGui.PushStyleVar(ImGuiStyleVar.WindowRounding, 10.0f * scale);
         ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, Vector2.Zero);
-        _styleVarsPushed = true;
     }
 
     /// <summary>
@@ -109,8 +110,7 @@ public class OBSStatusIndicator : Window, IDisposable
     /// </summary>
     public override void PostDraw()
     {
-        if (_styleVarsPushed)
-            ImGui.PopStyleVar(2);
+        ImGui.PopStyleVar(2);
     }
 
     /// <summary>
@@ -118,8 +118,6 @@ public class OBSStatusIndicator : Window, IDisposable
     /// </summary>
     public override void Draw()
     {
-        if (!_shouldDraw) return;
-
         var scale = _plugin.Configuration.IndicatorScale;
         var unlocked = _plugin.ConfigWindow.IsOpen;
 
