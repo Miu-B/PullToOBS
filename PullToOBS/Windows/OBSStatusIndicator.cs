@@ -195,6 +195,9 @@ public class OBSStatusIndicator : Window, IDisposable
         if (obs.IsRecording)
             return GetPulsingRedColor();
 
+        if (obs.IsConnected && _plugin.EncounterManager.IsStandby)
+            return new Vector4(0.0f, 1.0f, 0.0f, 1.0f);
+
         if (obs.IsReplayBufferActive)
             return new Vector4(1.0f, 0.6f, 0.0f, 1.0f);
 

@@ -171,6 +171,11 @@ public class PullToOBSConfigWindow : Window, IDisposable
             _statusMessage = "Recording";
             _statusColor = new Vector4(1.0f, 0.0f, 0.0f, 1.0f);
         }
+        else if (obs.IsConnected && _plugin.EncounterManager.IsStandby)
+        {
+            _statusMessage = "Standby";
+            _statusColor = new Vector4(0.0f, 1.0f, 0.0f, 1.0f);
+        }
         else if (obs.IsReplayBufferActive)
         {
             _statusMessage = "Replay Buffer Active";

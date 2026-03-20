@@ -22,6 +22,20 @@ public class EncounterManager : IDisposable
     private bool _isDisposed;
 
     /// <summary>
+    /// When true, combat-triggered recording is suppressed.
+    /// Runtime-only (not persisted) - resets to false on plugin startup.
+    /// Toggled via the /pto rec command.
+    /// </summary>
+    public bool IsStandby { get; set; }
+
+    /// <summary>
+    /// Tracks whether we initiated recording. Protected by <see cref="_lock"/>.
+    /// Set true when we call StartRecording, false when we call StopRecording
+    /// or determine we should not be recording.
+    /// </summary>
+    private bool _weStartedRecording;
+
+    /// <summary>
     /// Kernel-backed timer for the grace period before stopping recording.
     /// Fires reliably regardless of thread pool pressure.
     /// </summary>
@@ -66,21 +80,26 @@ public class EncounterManager : IDisposable
 
             _log.Debug($"[Encounter] Combat state changed: inCombat={inCombat}, wasInCombat={_isInCombat}");
 
-            if (inCombat && !_isInCombat)
+            _isInCombat = inCombat;
+            fireStateChanged = true;
+
+            // In standby mode, track combat state but skip recording actions.
+            if (IsStandby)
             {
-                // Entering combat -- cancel any pending stop
+                _log.Debug("[Encounter] Standby mode active - skipping recording actions");
+            }
+            else if (inCombat)
+            {
+                // Entering combat - cancel any pending stop
                 CancelGracePeriodTimer();
                 shouldStart = true;
                 _log.Debug("[Encounter] Entering combat, will start encounter");
             }
-            else if (!inCombat && _isInCombat)
+            else
             {
                 shouldEnd = true;
                 _log.Debug("[Encounter] Leaving combat, will end encounter");
             }
-
-            _isInCombat = inCombat;
-            fireStateChanged = true;
         }
 
         // Fire events outside the lock to avoid potential deadlocks
@@ -99,10 +118,15 @@ public class EncounterManager : IDisposable
     /// </summary>
     private void HandleEncounterStart()
     {
-        // Cancel any pending replay buffer save from a previous encounter
         lock (_lock)
         {
             CancelReplayBufferTimer();
+
+            if (_weStartedRecording)
+            {
+                _log.Debug("[Encounter] HandleEncounterStart: already in a recording session we started, skipping");
+                return;
+            }
         }
 
         ThreadPool.QueueUserWorkItem(_ =>
@@ -110,11 +134,19 @@ public class EncounterManager : IDisposable
             lock (_lock)
             {
                 if (_isDisposed) return;
+
+                // Re-check under lock - the grace period callback may have run between
+                // our initial check and this thread pool work item executing.
+                if (_weStartedRecording)
+                {
+                    _log.Debug("[Encounter] HandleEncounterStart: already in a recording session (re-check), skipping");
+                    return;
+                }
             }
 
             try
             {
-                _log.Debug($"[Encounter] HandleEncounterStart: obs.IsConnected={_obs.IsConnected}, obs.IsRecording={_obs.IsRecording}");
+                _log.Debug($"[Encounter] HandleEncounterStart: obs.IsConnected={_obs.IsConnected}");
 
                 if (!_obs.IsConnected)
                 {
@@ -126,7 +158,12 @@ public class EncounterManager : IDisposable
                 _obs.StartRecording();
                 _log.Debug("[Encounter] HandleEncounterStart: StartRecording called successfully");
 
-                // Schedule replay buffer save via a kernel-backed timer
+                lock (_lock)
+                {
+                    _weStartedRecording = true;
+                }
+
+                // Schedule replay buffer save via a kernel-backed timer.
                 ScheduleReplayBufferSave();
             }
             catch (Exception ex)
@@ -202,7 +239,8 @@ public class EncounterManager : IDisposable
 
             if (!_obs.IsConnected || !_obs.IsRecording)
             {
-                _log.Warning("[Encounter] HandleEncounterEnd: OBS not connected or not recording, firing EncounterEnded without stopping");
+                _log.Debug("[Encounter] HandleEncounterEnd: OBS not connected or not recording, firing EncounterEnded without stopping");
+                _weStartedRecording = false;
                 // Fire outside the lock below
             }
             else
@@ -233,11 +271,20 @@ public class EncounterManager : IDisposable
         lock (_lock)
         {
             if (_isDisposed) return;
+
+            // If we didn't start this recording, or combat resumed and cancelled us, bail out.
+            if (!_weStartedRecording)
+            {
+                _log.Debug("[Encounter] HandleEncounterEnd: _weStartedRecording is false, skipping stop");
+                return;
+            }
+
+            _weStartedRecording = false;
         }
 
         try
         {
-            // Re-check after grace period -- recording may have stopped externally
+            // Re-check after grace period - recording may have stopped externally
             if (!_obs.IsConnected || !_obs.IsRecording)
             {
                 _log.Debug("[Encounter] HandleEncounterEnd: recording already stopped during grace period, firing EncounterEnded without stopping");

@@ -58,11 +58,11 @@ public sealed class PullToOBSPlugin : IDalamudPlugin
 
         CommandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
         {
-            HelpMessage = "Open PullToOBS configuration window. Use 'obs' to toggle OBS connection, 'show'/'hide' for the indicator."
+            HelpMessage = "Open PullToOBS configuration window. Subcommands: obs (toggle connection), rec (toggle standby), show/hide (indicator)."
         });
         CommandManager.AddHandler(CommandAlias, new CommandInfo(OnCommand)
         {
-            HelpMessage = "Open PullToOBS configuration window (alias). Use 'obs' to toggle OBS connection, 'show'/'hide' for the indicator."
+            HelpMessage = "Open PullToOBS configuration window (alias). Subcommands: obs (toggle connection), rec (toggle standby), show/hide (indicator)."
         });
 
         PluginInterface.UiBuilder.Draw += DrawUi;
@@ -92,6 +92,12 @@ public sealed class PullToOBSPlugin : IDalamudPlugin
         else if (trimmedArgs == "obs")
         {
             _ = ToggleObsConnectionAsync();
+        }
+        else if (trimmedArgs == "rec")
+        {
+            EncounterManager.IsStandby = !EncounterManager.IsStandby;
+            var state = EncounterManager.IsStandby ? "ON - recording suppressed" : "OFF - recording enabled";
+            ChatGui.Print($"[PullToOBS] Standby mode: {state}");
         }
         else
         {

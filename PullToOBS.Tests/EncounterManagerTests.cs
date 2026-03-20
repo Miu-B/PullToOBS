@@ -191,7 +191,9 @@ public class EncounterManagerTests : IDisposable
     public async Task EnteringCombat_WithReplayBuffer_SavesReplayBuffer()
     {
         _obs.IsReplayBufferConfigured.Returns(true);
-        _obs.IsRecording.Returns(true);
+
+        // Simulate realistic OBS behavior: IsRecording becomes true after StartRecording is called
+        _obs.When(x => x.StartRecording()).Do(_ => _obs.IsRecording.Returns(true));
 
         SetCombatState(true);
 
@@ -205,7 +207,9 @@ public class EncounterManagerTests : IDisposable
     public async Task EnteringCombat_WithoutReplayBuffer_DoesNotSaveReplayBuffer()
     {
         _obs.IsReplayBufferConfigured.Returns(false);
-        _obs.IsRecording.Returns(true);
+
+        // Simulate realistic OBS behavior: IsRecording becomes true after StartRecording is called
+        _obs.When(x => x.StartRecording()).Do(_ => _obs.IsRecording.Returns(true));
 
         SetCombatState(true);
         await Task.Delay(6500);
