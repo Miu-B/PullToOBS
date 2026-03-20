@@ -64,19 +64,19 @@ public class EncounterManager : IDisposable
 
             if (inCombat == _isInCombat) return;
 
-            _log.Information($"[Encounter] Combat state changed: inCombat={inCombat}, wasInCombat={_isInCombat}");
+            _log.Debug($"[Encounter] Combat state changed: inCombat={inCombat}, wasInCombat={_isInCombat}");
 
             if (inCombat && !_isInCombat)
             {
                 // Entering combat -- cancel any pending stop
                 CancelGracePeriodTimer();
                 shouldStart = true;
-                _log.Information("[Encounter] Entering combat, will start encounter");
+                _log.Debug("[Encounter] Entering combat, will start encounter");
             }
             else if (!inCombat && _isInCombat)
             {
                 shouldEnd = true;
-                _log.Information("[Encounter] Leaving combat, will end encounter");
+                _log.Debug("[Encounter] Leaving combat, will end encounter");
             }
 
             _isInCombat = inCombat;
@@ -114,7 +114,7 @@ public class EncounterManager : IDisposable
 
             try
             {
-                _log.Information($"[Encounter] HandleEncounterStart: obs.IsConnected={_obs.IsConnected}, obs.IsRecording={_obs.IsRecording}");
+                _log.Debug($"[Encounter] HandleEncounterStart: obs.IsConnected={_obs.IsConnected}, obs.IsRecording={_obs.IsRecording}");
 
                 if (!_obs.IsConnected)
                 {
@@ -122,9 +122,9 @@ public class EncounterManager : IDisposable
                     return;
                 }
 
-                _log.Information("[Encounter] HandleEncounterStart: calling StartRecording");
+                _log.Debug("[Encounter] HandleEncounterStart: calling StartRecording");
                 _obs.StartRecording();
-                _log.Information("[Encounter] HandleEncounterStart: StartRecording called successfully");
+                _log.Debug("[Encounter] HandleEncounterStart: StartRecording called successfully");
 
                 // Schedule replay buffer save via a kernel-backed timer
                 ScheduleReplayBufferSave();
@@ -155,7 +155,7 @@ public class EncounterManager : IDisposable
             _replayBufferTimer = timer;
             timer.Start();
 
-            _log.Information("[Encounter] HandleEncounterStart: scheduled replay buffer save");
+            _log.Debug("[Encounter] HandleEncounterStart: scheduled replay buffer save");
         }
     }
 
@@ -174,9 +174,9 @@ public class EncounterManager : IDisposable
         {
             if (_obs.IsConnected && _obs.IsRecording && _obs.IsReplayBufferConfigured)
             {
-                _log.Information("[Encounter] HandleEncounterStart: calling SaveReplayBuffer");
+                _log.Debug("[Encounter] HandleEncounterStart: calling SaveReplayBuffer");
                 _obs.SaveReplayBuffer();
-                _log.Information("[Encounter] HandleEncounterStart: SaveReplayBuffer called successfully");
+                _log.Debug("[Encounter] HandleEncounterStart: SaveReplayBuffer called successfully");
             }
 
             EncounterStarted?.Invoke();
@@ -198,7 +198,7 @@ public class EncounterManager : IDisposable
         {
             if (_isDisposed) return;
 
-            _log.Information($"[Encounter] HandleEncounterEnd: obs.IsConnected={_obs.IsConnected}, obs.IsRecording={_obs.IsRecording}");
+            _log.Debug($"[Encounter] HandleEncounterEnd: obs.IsConnected={_obs.IsConnected}, obs.IsRecording={_obs.IsRecording}");
 
             if (!_obs.IsConnected || !_obs.IsRecording)
             {
@@ -207,7 +207,7 @@ public class EncounterManager : IDisposable
             }
             else
             {
-                _log.Information("[Encounter] HandleEncounterEnd: starting grace period timer");
+                _log.Debug("[Encounter] HandleEncounterEnd: starting grace period timer");
 
                 CancelGracePeriodTimer();
 
@@ -240,14 +240,14 @@ public class EncounterManager : IDisposable
             // Re-check after grace period -- recording may have stopped externally
             if (!_obs.IsConnected || !_obs.IsRecording)
             {
-                _log.Information("[Encounter] HandleEncounterEnd: recording already stopped during grace period, firing EncounterEnded without stopping");
+                _log.Debug("[Encounter] HandleEncounterEnd: recording already stopped during grace period, firing EncounterEnded without stopping");
                 EncounterEnded?.Invoke();
                 return;
             }
 
-            _log.Information("[Encounter] HandleEncounterEnd: calling StopRecording");
+            _log.Debug("[Encounter] HandleEncounterEnd: calling StopRecording");
             _obs.StopRecording();
-            _log.Information("[Encounter] HandleEncounterEnd: StopRecording called successfully");
+            _log.Debug("[Encounter] HandleEncounterEnd: StopRecording called successfully");
             EncounterEnded?.Invoke();
         }
         catch (Exception ex)
@@ -262,7 +262,7 @@ public class EncounterManager : IDisposable
     {
         if (_gracePeriodTimer != null)
         {
-            _log.Information("[Encounter] Grace period timer cancelled");
+            _log.Debug("[Encounter] Grace period timer cancelled");
             _gracePeriodTimer.Stop();
             _gracePeriodTimer.Elapsed -= OnGracePeriodElapsed;
             _gracePeriodTimer.Dispose();

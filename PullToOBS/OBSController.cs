@@ -180,7 +180,7 @@ public class OBSController : IOBSController
             _obs.StartReplayBuffer();
             _isReplayBufferActive = true;
             ReplayBufferStateChanged?.Invoke();
-            _log.Information("[OBS] TryStartReplayBuffer: started successfully");
+            _log.Debug("[OBS] TryStartReplayBuffer: started successfully");
         }
         catch (Exception ex) when (IsAlreadyRunningError(ex))
         {
@@ -221,7 +221,7 @@ public class OBSController : IOBSController
 
     public void SaveReplayBuffer()
     {
-        _log.Information($"[OBS] SaveReplayBuffer called: IsConnected={_obs.IsConnected}, IsReplayBufferActive={_isReplayBufferActive}");
+        _log.Debug($"[OBS] SaveReplayBuffer called: IsConnected={_obs.IsConnected}, IsReplayBufferActive={_isReplayBufferActive}");
         ExecuteObsAction(
             "SaveReplayBuffer",
             () => _obs.SaveReplayBuffer());
@@ -229,7 +229,7 @@ public class OBSController : IOBSController
 
     public void StartRecording()
     {
-        _log.Information($"[OBS] StartRecording called: IsConnected={_obs.IsConnected}, IsRecording={_isRecording}");
+        _log.Debug($"[OBS] StartRecording called: IsConnected={_obs.IsConnected}, IsRecording={_isRecording}");
         ExecuteObsAction(
             "StartRecording",
             () =>
@@ -242,7 +242,7 @@ public class OBSController : IOBSController
 
     public void StopRecording()
     {
-        _log.Information($"[OBS] StopRecording called: IsConnected={_obs.IsConnected}, IsRecording={_isRecording}");
+        _log.Debug($"[OBS] StopRecording called: IsConnected={_obs.IsConnected}, IsRecording={_isRecording}");
 
         if (!_obs.IsConnected)
         {
@@ -255,11 +255,11 @@ public class OBSController : IOBSController
             _obs.StopRecord();
             _isRecording = false;
             RecordingStateChanged?.Invoke();
-            _log.Information("[OBS] StopRecording: succeeded");
+            _log.Debug("[OBS] StopRecording: succeeded");
         }
         catch (Exception ex) when (IsNotRecordingError(ex))
         {
-            _log.Information("[OBS] StopRecording: recording was already stopped (501), treating as success");
+            _log.Debug("[OBS] StopRecording: recording was already stopped (501), treating as success");
             _isRecording = false;
             RecordingStateChanged?.Invoke();
         }
@@ -285,7 +285,7 @@ public class OBSController : IOBSController
         try
         {
             action();
-            _log.Information($"[OBS] {operationName}: succeeded");
+            _log.Debug($"[OBS] {operationName}: succeeded");
         }
         catch (Exception ex)
         {
@@ -319,7 +319,7 @@ public class OBSController : IOBSController
 
     private void OnConnected(object? sender, EventArgs e)
     {
-        _log.Information("[OBS] WebSocket connected event received");
+        _log.Debug("[OBS] WebSocket connected event received");
         ConnectionStateChanged?.Invoke();
     }
 

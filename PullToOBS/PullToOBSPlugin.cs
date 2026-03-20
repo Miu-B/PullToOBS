@@ -52,6 +52,7 @@ public sealed class PullToOBSPlugin : IDalamudPlugin
         WindowSystem.AddWindow(ConfigWindow);
 
         _indicator = new OBSStatusIndicator(this, ClientState, Condition);
+        WindowSystem.AddWindow(_indicator);
 
         EnsureIndicatorFont();
 
@@ -157,7 +158,6 @@ public sealed class PullToOBSPlugin : IDalamudPlugin
     {
         EnsureIndicatorFont();
         WindowSystem.Draw();
-        _indicator.Draw();
     }
 
     internal void EnsureIndicatorFont()

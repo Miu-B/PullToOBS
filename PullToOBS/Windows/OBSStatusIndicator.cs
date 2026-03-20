@@ -3,11 +3,12 @@ using System.Numerics;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Interface.ManagedFontAtlas;
+using Dalamud.Interface.Windowing;
 using Dalamud.Plugin.Services;
 
 namespace PullToOBS.Windows;
 
-public class OBSStatusIndicator : IDisposable
+public class OBSStatusIndicator : Window, IDisposable
 {
     private readonly PullToOBSPlugin _plugin;
     private readonly IClientState _clientState;
@@ -15,14 +16,36 @@ public class OBSStatusIndicator : IDisposable
 
     private bool _dragging;
     private Vector2 _dragOffset;
+    private bool _styleVarsPushed;
+    private bool _shouldDraw;
 
     private const float DotSize = 22.0f;
 
+    /// <summary>
+    /// Flags that are always present on this window.
+    /// </summary>
+    private const ImGuiWindowFlags BaseFlags =
+        ImGuiWindowFlags.NoSavedSettings |
+        ImGuiWindowFlags.NoTitleBar |
+        ImGuiWindowFlags.NoResize |
+        ImGuiWindowFlags.NoScrollbar |
+        ImGuiWindowFlags.NoScrollWithMouse |
+        ImGuiWindowFlags.NoBackground |
+        ImGuiWindowFlags.NoFocusOnAppearing |
+        ImGuiWindowFlags.NoBringToFrontOnFocus;
+
     public OBSStatusIndicator(PullToOBSPlugin plugin, IClientState clientState, ICondition condition)
+        : base("###PullToOBSIndicator", BaseFlags)
     {
         _plugin = plugin;
         _clientState = clientState;
         _condition = condition;
+
+        // Keep the window permanently open; visibility is controlled in PreDraw/Draw.
+        IsOpen = true;
+
+        // Disable Dalamud's built-in close button / collapse behavior.
+        RespectCloseHotkey = false;
     }
 
     public void Dispose() { }
@@ -50,13 +73,24 @@ public class OBSStatusIndicator : IDisposable
         return true;
     }
 
-    public void Draw()
+    /// <summary>
+    /// Called before each Draw frame. Sets position, size, style, and updates Flags.
+    /// If the indicator should be hidden this frame, sets IsOpen = false temporarily.
+    /// </summary>
+    public override void PreDraw()
     {
-        if (_plugin.Configuration.HideIndicator) return;
+        _styleVarsPushed = false;
+        _shouldDraw = false;
 
         var unlocked = _plugin.ConfigWindow.IsOpen;
 
-        if (!IsInValidGameplayState() && !unlocked) return;
+        if (_plugin.Configuration.HideIndicator || (!IsInValidGameplayState() && !unlocked))
+            return;
+
+        _shouldDraw = true;
+
+        // Toggle NoInputs depending on whether the config window is open (unlock mode).
+        Flags = unlocked ? BaseFlags : BaseFlags | ImGuiWindowFlags.NoInputs;
 
         var scale = _plugin.Configuration.IndicatorScale;
         var pos = _plugin.Configuration.IndicatorPosition;
@@ -65,91 +99,95 @@ public class OBSStatusIndicator : IDisposable
         ImGui.SetNextWindowPos(pos, ImGuiCond.Always);
         ImGui.SetNextWindowSize(size, ImGuiCond.Always);
 
-        var flags =
-            ImGuiWindowFlags.NoSavedSettings |
-            ImGuiWindowFlags.NoTitleBar |
-            ImGuiWindowFlags.NoResize |
-            ImGuiWindowFlags.NoScrollbar |
-            ImGuiWindowFlags.NoScrollWithMouse |
-            ImGuiWindowFlags.NoBackground;
-
-        if (!unlocked)
-            flags |= ImGuiWindowFlags.NoInputs;
-
         ImGui.PushStyleVar(ImGuiStyleVar.WindowRounding, 10.0f * scale);
         ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, Vector2.Zero);
+        _styleVarsPushed = true;
+    }
 
-        if (ImGui.Begin("###PullToOBSIndicator", flags))
+    /// <summary>
+    /// Called after each Draw frame. Pops style vars pushed in PreDraw.
+    /// </summary>
+    public override void PostDraw()
+    {
+        if (_styleVarsPushed)
+            ImGui.PopStyleVar(2);
+    }
+
+    /// <summary>
+    /// Draws the indicator content. Dalamud handles Begin/End.
+    /// </summary>
+    public override void Draw()
+    {
+        if (!_shouldDraw) return;
+
+        var scale = _plugin.Configuration.IndicatorScale;
+        var unlocked = _plugin.ConfigWindow.IsOpen;
+
+        var drawList = ImGui.GetWindowDrawList();
+        var winPos = ImGui.GetWindowPos();
+        var winSize = ImGui.GetWindowSize();
+
+        drawList.PushClipRect(winPos, winPos + winSize, true);
+
+        // Background
+        var rounding = 5.0f * scale;
+        var bgColor = ImGui.GetColorU32(new Vector4(0.1f, 0.1f, 0.1f, 0.9f));
+        drawList.AddRectFilled(winPos, winPos + winSize, bgColor, rounding);
+
+        // Text (left side, using scaled font)
+        using var font = _plugin.IndicatorFont.Available ? _plugin.IndicatorFont.Push() : null;
+
+        const string text = "OBS";
+        var textSize = ImGui.CalcTextSize(text);
+        var textColorU32 = ImGui.GetColorU32(new Vector4(0.95f, 0.95f, 0.95f, 1.0f));
+        var textPos = new Vector2(
+            winPos.X + 10.0f * scale,
+            winPos.Y + (winSize.Y - textSize.Y) / 2.0f);
+
+        drawList.AddText(textPos, textColorU32, text);
+
+        // Dot (right of text)
+        var dotSize = DotSize * scale;
+        var dotCenter = new Vector2(
+            winPos.X + winSize.X - (10.0f * scale) - dotSize / 2.0f,
+            winPos.Y + winSize.Y / 2.0f);
+        drawList.AddCircleFilled(dotCenter, dotSize / 2.0f, ImGui.GetColorU32(GetStatusColor()), 32);
+
+        // Corner accents
+        DrawCornerAccents(drawList, winPos, winSize, rounding, scale);
+
+        drawList.PopClipRect();
+
+        // Dragging
+        if (unlocked)
         {
-            var drawList = ImGui.GetWindowDrawList();
-            var winPos = ImGui.GetWindowPos();
-            var winSize = ImGui.GetWindowSize();
+            var hovered = ImGui.IsWindowHovered(ImGuiHoveredFlags.AllowWhenBlockedByActiveItem);
 
-            drawList.PushClipRect(winPos, winPos + winSize, true);
-
-            // Background
-            var rounding = 5.0f * scale;
-            var bgColor = ImGui.GetColorU32(new Vector4(0.1f, 0.1f, 0.1f, 0.9f));
-            drawList.AddRectFilled(winPos, winPos + winSize, bgColor, rounding);
-
-            // Text (left side, using scaled font)
-            using var font = _plugin.IndicatorFont.Available ? _plugin.IndicatorFont.Push() : null;
-
-            const string text = "OBS";
-            var textSize = ImGui.CalcTextSize(text);
-            var textColorU32 = ImGui.GetColorU32(new Vector4(0.95f, 0.95f, 0.95f, 1.0f));
-            var textPos = new Vector2(
-                winPos.X + 10.0f * scale,
-                winPos.Y + (winSize.Y - textSize.Y) / 2.0f);
-
-            drawList.AddText(textPos, textColorU32, text);
-
-            // Dot (right of text)
-            var dotSize = DotSize * scale;
-            var dotCenter = new Vector2(
-                winPos.X + winSize.X - (10.0f * scale) - dotSize / 2.0f,
-                winPos.Y + winSize.Y / 2.0f);
-            drawList.AddCircleFilled(dotCenter, dotSize / 2.0f, ImGui.GetColorU32(GetStatusColor()), 32);
-
-            // Corner accents
-            DrawCornerAccents(drawList, winPos, winSize, rounding, scale);
-
-            drawList.PopClipRect();
-
-            // Dragging
-            if (unlocked)
+            if (!_dragging && hovered && ImGui.IsMouseClicked(ImGuiMouseButton.Left))
             {
-                var hovered = ImGui.IsWindowHovered(ImGuiHoveredFlags.AllowWhenBlockedByActiveItem);
-
-                if (!_dragging && hovered && ImGui.IsMouseClicked(ImGuiMouseButton.Left))
-                {
-                    _dragging = true;
-                    _dragOffset = ImGui.GetMousePos() - winPos;
-                }
-
-                if (_dragging)
-                {
-                    if (ImGui.IsMouseDown(ImGuiMouseButton.Left))
-                    {
-                        var newPos = ImGui.GetMousePos() - _dragOffset;
-                        ImGui.SetWindowPos(newPos);
-                        _plugin.Configuration.IndicatorPosition = newPos;
-                    }
-                    else
-                    {
-                        _dragging = false;
-                        _plugin.Configuration.Save();
-                    }
-                }
+                _dragging = true;
+                _dragOffset = ImGui.GetMousePos() - winPos;
             }
-            else
+
+            if (_dragging)
             {
-                _dragging = false;
+                if (ImGui.IsMouseDown(ImGuiMouseButton.Left))
+                {
+                    var newPos = ImGui.GetMousePos() - _dragOffset;
+                    ImGui.SetWindowPos(newPos);
+                    _plugin.Configuration.IndicatorPosition = newPos;
+                }
+                else
+                {
+                    _dragging = false;
+                    _plugin.Configuration.Save();
+                }
             }
         }
-
-        ImGui.End();
-        ImGui.PopStyleVar(2);
+        else
+        {
+            _dragging = false;
+        }
     }
 
     private Vector4 GetStatusColor()
