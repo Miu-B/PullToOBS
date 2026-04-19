@@ -39,20 +39,18 @@ Since PullToOBS produces two files per encounter (a replay buffer clip and the f
 
 ## Requirements
 
-* [OBS Studio](https://obsproject.com/) with WebSocket v5 enabled (Settings > WebSocket Server)
-* Replay Buffer configured in OBS (Settings > Output > Replay Buffer) for prepull capture
+* [OBS Studio](https://obsproject.com/) with **WebSocket v5 enabled** (OBS > Tools > WebSocket Server Settings)
+* **Replay Buffer enabled in OBS** (OBS > Settings > Output > Replay Buffer)
+
+> **The Replay Buffer must be enabled in OBS before connecting.** This is what captures the prepull clip.
+> You can confirm it's active by the indicator turning **orange** after connecting. If the indicator stays
+> **green** instead of orange, go into OBS Settings > Output > Replay Buffer and enable it, then reconnect.
 
 ## Installation
 
-PullToOBS isn't in the standard Dalamud plugin repository yet, so you'll need to add it as a third-party repo.
+PullToOBS is available in the official Dalamud plugin repository.
 
-Add this URL in Dalamud settings (`/xlsettings` > Experimental > Custom Plugin Repositories):
-
-```
-https://raw.githubusercontent.com/Miu-B/PullToOBS/master/repo.json
-```
-
-After that, open the Plugin Installer (`/xlplugins`), search for **PullToOBS**, and install it.
+Open the Plugin Installer in-game (`/xlplugins`), search for **PullToOBS**, and install it.
 
 ## How To Use
 

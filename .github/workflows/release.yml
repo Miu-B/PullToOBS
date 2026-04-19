@@ -24,7 +24,7 @@ jobs:
       - name: Setup Dalamud
         shell: pwsh
         run: |
-          Invoke-WebRequest -Uri https://goatcorp.github.io/dalamud-distrib/stg/latest.zip -OutFile ./latest.zip
+          Invoke-WebRequest -Uri https://goatcorp.github.io/dalamud-distrib/latest.zip -OutFile ./latest.zip
           Expand-Archive -Path ./latest.zip "$env:AppData\XIVLauncher\addon\Hooks\dev" -Force
 
       - name: Restore project dependencies
@@ -44,7 +44,6 @@ jobs:
           generate_release_notes: true
           body: |
             ## Installation
-            Add this repository URL to Dalamud Plugin Installer:
-            `https://raw.githubusercontent.com/Miu-B/PullToOBS/master/repo.json`
+            Install directly from the Dalamud Plugin Installer — search for **PullToOBS**.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
