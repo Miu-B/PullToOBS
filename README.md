@@ -67,6 +67,7 @@ Open the Plugin Installer in-game (`/xlplugins`), search for **PullToOBS**, and 
 
 * `/pulltoobs` or `/pto` - Toggle the configuration window
 * `/pulltoobs obs` or `/pto obs` - Toggle OBS connection
+* `/pulltoobs rec` or `/pto rec` - Toggle standby mode (suppresses automatic recording)
 * `/pulltoobs show` or `/pto show` - Show the indicator
 * `/pulltoobs hide` or `/pto hide` - Hide the indicator
 
