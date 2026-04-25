@@ -27,15 +27,23 @@ I already had [rec-cue](https://github.com/Miu-B/rec-cue) to show me an in-game 
   * Draggable when the config window is open
   * Adjustable scale (0.5x - 2.0x)
 
+* **Encounter Metadata** -- optional JSON files alongside recordings
+  * Writes a JSON file per encounter with encounter name, job, territory, and file paths
+  * Designed for use with the [limitcut](https://github.com/Miu-B/limitcut) companion tool
+  * Enabled via the "Save encounter metadata" checkbox in the config window (disabled by default)
+
 * **Simple Configuration**
   * OBS WebSocket URL and password
   * Optional auto-connect on plugin start
   * Indicator position, scale, and visibility settings
+  * Save encounter metadata toggle
   * All settings are saved automatically
 
 ## Companion Tool
 
 Since PullToOBS produces two files per encounter (a replay buffer clip and the full recording), you'll probably want to stitch them together afterwards. [limitcut](https://github.com/Miu-B/limitcut) does exactly that -- it finds where the two recordings overlap using audio cross-correlation and combines them into a single MP4, no manual trimming required.
+
+PullToOBS can optionally generate JSON metadata files alongside recordings, which limitcut reads to organise your outputs into a structured directory tree. Enable "Save encounter metadata" in the config window to use this feature.
 
 ## Requirements
 
@@ -62,6 +70,7 @@ Open the Plugin Installer in-game (`/xlplugins`), search for **PullToOBS**, and 
 4. Enter your OBS WebSocket URL and password, then click Connect
 5. The indicator shows up on screen -- you're good to go
 6. Enter combat and recording starts automatically
+7. (Optional) Check **"Save encounter metadata"** in the config window if you use limitcut — a JSON file will be written alongside each recording
 
 ### Commands
 
@@ -87,6 +96,7 @@ All settings are saved automatically, so you can just set things up once and for
 * **Auto-connect on start** - Automatically connect to OBS when the plugin loads
 * **Indicator Scale** - Scale multiplier for the indicator (0.5x to 2.0x)
 * **Hide Indicator** - Toggle indicator visibility
+* **Save encounter metadata** - Toggle JSON metadata file generation for use with limitcut (default: disabled)
 
 ## Development
 
