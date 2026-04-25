@@ -19,7 +19,7 @@ public interface IOBSController : IDisposable
     void Disconnect();
     void StartReplayBuffer();
     void StopReplayBuffer();
-    void SaveReplayBuffer();
+    Task<string?> SaveReplayBuffer();
     void StartRecording();
-    void StopRecording();
+    string? StopRecording();
 }

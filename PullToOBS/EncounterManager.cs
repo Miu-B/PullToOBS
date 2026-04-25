@@ -1,5 +1,6 @@
 using System;
 using System.Threading;
+using System.Threading.Tasks;
 using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Plugin.Services;
 
@@ -14,6 +15,8 @@ public class EncounterManager : IDisposable
     private static readonly TimeSpan CombatEndGracePeriod = TimeSpan.FromSeconds(5);
 
     private readonly IOBSController _obs;
+    private readonly IClientState _clientState;
+    private readonly IPlayerState _playerState;
     private readonly ICondition _condition;
     private readonly IPluginLog _log;
 
@@ -34,6 +37,12 @@ public class EncounterManager : IDisposable
     /// or determine we should not be recording.
     /// </summary>
     private bool _weStartedRecording;
+    private DateTimeOffset? _encounterStartedAt;
+    private uint _encounterTerritoryType;
+    private string? _encounterJobAbbreviation;
+    private string? _replayBufferPath;
+    private long _encounterSequence;
+    private Task<string?>? _pendingReplayBufferSaveTask;
 
     /// <summary>
     /// Kernel-backed timer for the grace period before stopping recording.
@@ -49,13 +58,15 @@ public class EncounterManager : IDisposable
     public bool IsInCombat => _isInCombat;
 
     public event Action? EncounterStarted;
-    public event Action? EncounterEnded;
+    public event Action<EncounterRecord>? EncounterEnded;
     public event Action<string>? ErrorOccurred;
     public event Action? StateChanged;
 
-    public EncounterManager(IOBSController obs, ICondition condition, IPluginLog log)
+    public EncounterManager(IOBSController obs, IClientState clientState, IPlayerState playerState, ICondition condition, IPluginLog log)
     {
         _obs = obs;
+        _clientState = clientState;
+        _playerState = playerState;
         _condition = condition;
         _log = log;
     }
@@ -127,6 +138,13 @@ public class EncounterManager : IDisposable
                 _log.Debug("[Encounter] HandleEncounterStart: already in a recording session we started, skipping");
                 return;
             }
+
+            _encounterStartedAt = DateTimeOffset.Now;
+            _encounterTerritoryType = _clientState.TerritoryType;
+            _encounterJobAbbreviation = _clientState.IsLoggedIn ? _playerState.ClassJob.ValueNullable?.Abbreviation.ToString() : null;
+            _replayBufferPath = null;
+            _pendingReplayBufferSaveTask = null;
+            _encounterSequence++;
         }
 
         ThreadPool.QueueUserWorkItem(_ =>
@@ -142,6 +160,12 @@ public class EncounterManager : IDisposable
                     _log.Debug("[Encounter] HandleEncounterStart: already in a recording session (re-check), skipping");
                     return;
                 }
+
+                if (!_isInCombat || IsStandby)
+                {
+                    _log.Debug("[Encounter] HandleEncounterStart: combat ended or standby was enabled before recording could start, skipping");
+                    return;
+                }
             }
 
             try
@@ -151,6 +175,10 @@ public class EncounterManager : IDisposable
                 if (!_obs.IsConnected)
                 {
                     _log.Warning("[Encounter] HandleEncounterStart: OBS not connected, aborting");
+                    lock (_lock)
+                    {
+                        ResetEncounterContext();
+                    }
                     return;
                 }
 
@@ -168,6 +196,11 @@ public class EncounterManager : IDisposable
             }
             catch (Exception ex)
             {
+                lock (_lock)
+                {
+                    ResetEncounterContext();
+                }
+
                 _log.Error($"[Encounter] HandleEncounterStart exception: {ex}");
                 ErrorOccurred?.Invoke($"Error starting encounter: {ex.Message}");
             }
@@ -200,11 +233,14 @@ public class EncounterManager : IDisposable
     /// Fires when the replay buffer save delay has elapsed.
     /// Runs on a thread pool thread (fired by the kernel timer), then saves the replay buffer.
     /// </summary>
-    private void OnReplayBufferTimerElapsed(object? sender, System.Timers.ElapsedEventArgs e)
+    private async void OnReplayBufferTimerElapsed(object? sender, System.Timers.ElapsedEventArgs e)
     {
+        long encounterSequence;
+
         lock (_lock)
         {
             if (_isDisposed) return;
+            encounterSequence = _encounterSequence;
         }
 
         try
@@ -212,8 +248,18 @@ public class EncounterManager : IDisposable
             if (_obs.IsConnected && _obs.IsRecording && _obs.IsReplayBufferConfigured)
             {
                 _log.Debug("[Encounter] HandleEncounterStart: calling SaveReplayBuffer");
-                _obs.SaveReplayBuffer();
-                _log.Debug("[Encounter] HandleEncounterStart: SaveReplayBuffer called successfully");
+                var replayBufferSaveTask = _obs.SaveReplayBuffer();
+
+                lock (_lock)
+                {
+                    if (_isDisposed || _encounterStartedAt is null || _encounterSequence != encounterSequence)
+                        return;
+
+                    _pendingReplayBufferSaveTask = replayBufferSaveTask;
+                }
+
+                var replayBufferPath = await TrackReplayBufferSaveAsync(replayBufferSaveTask, encounterSequence);
+                _log.Debug($"[Encounter] HandleEncounterStart: SaveReplayBuffer completed (path={replayBufferPath ?? "<null>"})");
             }
 
             EncounterStarted?.Invoke();
@@ -231,6 +277,9 @@ public class EncounterManager : IDisposable
     /// </summary>
     private void HandleEncounterEnd()
     {
+        var shouldFinalizeWithoutStop = false;
+        long encounterSequence = 0;
+
         lock (_lock)
         {
             if (_isDisposed) return;
@@ -239,9 +288,17 @@ public class EncounterManager : IDisposable
 
             if (!_obs.IsConnected || !_obs.IsRecording)
             {
-                _log.Debug("[Encounter] HandleEncounterEnd: OBS not connected or not recording, firing EncounterEnded without stopping");
+                if (_encounterStartedAt is null)
+                {
+                    _log.Debug("[Encounter] HandleEncounterEnd: OBS not connected or not recording, and no encounter context exists");
+                    ResetEncounterContext();
+                    return;
+                }
+
+                _log.Debug("[Encounter] HandleEncounterEnd: OBS not connected or not recording, finalizing encounter without stopping");
+                encounterSequence = _encounterSequence;
                 _weStartedRecording = false;
-                // Fire outside the lock below
+                shouldFinalizeWithoutStop = true;
             }
             else
             {
@@ -259,15 +316,18 @@ public class EncounterManager : IDisposable
             }
         }
 
-        EncounterEnded?.Invoke();
+        if (shouldFinalizeWithoutStop)
+            _ = FinalizeEncounterWithoutStopAsync(encounterSequence);
     }
 
     /// <summary>
     /// Fires when the grace period has elapsed without combat resuming.
     /// Runs on a thread pool thread (fired by the kernel timer), then stops the recording.
     /// </summary>
-    private void OnGracePeriodElapsed(object? sender, System.Timers.ElapsedEventArgs e)
+    private async void OnGracePeriodElapsed(object? sender, System.Timers.ElapsedEventArgs e)
     {
+        long encounterSequence;
+
         lock (_lock)
         {
             if (_isDisposed) return;
@@ -279,29 +339,137 @@ public class EncounterManager : IDisposable
                 return;
             }
 
+            encounterSequence = _encounterSequence;
             _weStartedRecording = false;
         }
 
         try
         {
+            await AwaitPendingReplayBufferSaveAsync();
+
             // Re-check after grace period - recording may have stopped externally
             if (!_obs.IsConnected || !_obs.IsRecording)
             {
-                _log.Debug("[Encounter] HandleEncounterEnd: recording already stopped during grace period, firing EncounterEnded without stopping");
-                EncounterEnded?.Invoke();
+                _log.Debug("[Encounter] HandleEncounterEnd: recording already stopped during grace period, finalizing encounter without stopping");
+                var encounterRecordWithoutStop = CompleteEncounter(null, encounterSequence);
+                if (encounterRecordWithoutStop is not null)
+                    EncounterEnded?.Invoke(encounterRecordWithoutStop);
+
                 return;
             }
 
             _log.Debug("[Encounter] HandleEncounterEnd: calling StopRecording");
-            _obs.StopRecording();
-            _log.Debug("[Encounter] HandleEncounterEnd: StopRecording called successfully");
-            EncounterEnded?.Invoke();
+            var recordingPath = _obs.StopRecording();
+            _log.Debug($"[Encounter] HandleEncounterEnd: StopRecording called successfully (path={recordingPath ?? "<null>"})");
+
+            var encounterRecord = CompleteEncounter(recordingPath, encounterSequence);
+            if (encounterRecord is not null)
+                EncounterEnded?.Invoke(encounterRecord);
         }
         catch (Exception ex)
         {
             _log.Error($"[Encounter] HandleEncounterEnd exception: {ex}");
             ErrorOccurred?.Invoke($"Error ending encounter: {ex.Message}");
         }
+    }
+
+    private async Task FinalizeEncounterWithoutStopAsync(long encounterSequence)
+    {
+        try
+        {
+            await AwaitPendingReplayBufferSaveAsync();
+
+            var encounterRecord = CompleteEncounter(null, encounterSequence);
+            if (encounterRecord is not null)
+                EncounterEnded?.Invoke(encounterRecord);
+        }
+        catch (Exception ex)
+        {
+            _log.Error($"[Encounter] FinalizeEncounterWithoutStopAsync exception: {ex}");
+            ErrorOccurred?.Invoke($"Error finalizing encounter: {ex.Message}");
+        }
+    }
+
+    private async Task<string?> TrackReplayBufferSaveAsync(Task<string?> replayBufferSaveTask, long encounterSequence)
+    {
+        try
+        {
+            var replayBufferPath = await replayBufferSaveTask;
+
+            lock (_lock)
+            {
+                if (_isDisposed || _encounterStartedAt is null || _encounterSequence != encounterSequence)
+                    return replayBufferPath;
+
+                if (ReferenceEquals(_pendingReplayBufferSaveTask, replayBufferSaveTask))
+                    _pendingReplayBufferSaveTask = null;
+
+                _replayBufferPath = replayBufferPath;
+            }
+
+            return replayBufferPath;
+        }
+        catch
+        {
+            lock (_lock)
+            {
+                if (_encounterSequence == encounterSequence && ReferenceEquals(_pendingReplayBufferSaveTask, replayBufferSaveTask))
+                    _pendingReplayBufferSaveTask = null;
+            }
+
+            throw;
+        }
+    }
+
+    private async Task AwaitPendingReplayBufferSaveAsync()
+    {
+        Task<string?>? replayBufferSaveTask;
+
+        lock (_lock)
+        {
+            replayBufferSaveTask = _pendingReplayBufferSaveTask;
+        }
+
+        if (replayBufferSaveTask is null)
+            return;
+
+        try
+        {
+            await replayBufferSaveTask;
+        }
+        catch (Exception ex)
+        {
+            _log.Debug($"[Encounter] AwaitPendingReplayBufferSaveAsync ignored save error: {ex.GetType().Name}: {ex.Message}");
+        }
+    }
+
+    private EncounterRecord? CompleteEncounter(string? recordingPath, long encounterSequence)
+    {
+        lock (_lock)
+        {
+            if (_encounterStartedAt is null || _encounterSequence != encounterSequence)
+                return null;
+
+            var encounterRecord = new EncounterRecord(
+                _encounterStartedAt.Value,
+                _encounterTerritoryType,
+                _encounterJobAbbreviation,
+                recordingPath,
+                _replayBufferPath);
+
+            ResetEncounterContext();
+            return encounterRecord;
+        }
+    }
+
+    private void ResetEncounterContext()
+    {
+        CancelReplayBufferTimer();
+        _encounterStartedAt = null;
+        _encounterTerritoryType = 0;
+        _encounterJobAbbreviation = null;
+        _replayBufferPath = null;
+        _pendingReplayBufferSaveTask = null;
     }
 
     /// <summary>Cancels and disposes the grace period timer if active. Must be called under lock.</summary>

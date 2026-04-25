@@ -7,6 +7,7 @@ using Dalamud.Interface.ManagedFontAtlas;
 using Dalamud.Interface.Windowing;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
+using Lumina.Excel.Sheets;
 using PullToOBS.Windows;
 
 namespace PullToOBS;
@@ -17,9 +18,11 @@ public sealed class PullToOBSPlugin : IDalamudPlugin
     [PluginService] internal static ICommandManager CommandManager { get; private set; } = null!;
     [PluginService] internal static IPluginLog Log { get; private set; } = null!;
     [PluginService] internal static IClientState ClientState { get; private set; } = null!;
+    [PluginService] internal static IPlayerState PlayerState { get; private set; } = null!;
     [PluginService] internal static ICondition Condition { get; private set; } = null!;
     [PluginService] internal static IChatGui ChatGui { get; private set; } = null!;
     [PluginService] internal static IFramework Framework { get; private set; } = null!;
+    [PluginService] internal static IDataManager DataManager { get; private set; } = null!;
 
     private const string CommandName = "/pulltoobs";
     private const string CommandAlias = "/pto";
@@ -31,6 +34,7 @@ public sealed class PullToOBSPlugin : IDalamudPlugin
     public WindowSystem WindowSystem { get; } = new("PullToOBS");
     public PullToOBSConfigWindow ConfigWindow { get; private set; }
     private OBSStatusIndicator _indicator;
+    private readonly EncounterLogger _encounterLogger;
 
     // Scaled font handle for the indicator
     internal IFontHandle IndicatorFont { get; private set; } = null!;
@@ -43,7 +47,8 @@ public sealed class PullToOBSPlugin : IDalamudPlugin
         Configuration.SetSaveAction(PluginInterface.SavePluginConfig);
 
         ObsController = new OBSController(Log);
-        EncounterManager = new EncounterManager(ObsController, Condition, Log);
+        EncounterManager = new EncounterManager(ObsController, ClientState, PlayerState, Condition, Log);
+        _encounterLogger = new EncounterLogger(EncounterManager, Log, territoryType => ResolveEncounterName(DataManager, territoryType), () => Configuration.SaveEncounterMetadata);
 
         ObsController.ErrorOccurred += OnOBSError;
         EncounterManager.ErrorOccurred += OnEncounterError;
@@ -223,9 +228,48 @@ public sealed class PullToOBSPlugin : IDalamudPlugin
         EncounterManager.ErrorOccurred -= OnEncounterError;
 
         EncounterManager.Dispose();
+        _encounterLogger.Dispose();
         ObsController.Dispose();
 
         if (_ownsIndicatorFont)
             IndicatorFont.Dispose();
+    }
+
+    private static string? ResolveEncounterName(IDataManager dataManager, uint territoryTypeId)
+    {
+        TerritoryType? territory = null;
+        var territorySheet = dataManager.GetExcelSheet<TerritoryType>();
+        if (territorySheet is null)
+            return null;
+
+        foreach (var row in territorySheet)
+        {
+            if (row.RowId != territoryTypeId)
+                continue;
+
+            territory = row;
+            break;
+        }
+
+        if (territory is null)
+            return null;
+
+        var contentFinderConditionRowId = territory.Value.ContentFinderCondition.RowId;
+        if (contentFinderConditionRowId == 0)
+            return null;
+
+        var contentFinderConditionSheet = dataManager.GetExcelSheet<ContentFinderCondition>();
+        if (contentFinderConditionSheet is null)
+            return null;
+
+        foreach (var row in contentFinderConditionSheet)
+        {
+            if (row.RowId != contentFinderConditionRowId)
+                continue;
+
+            return row.Name.ToString();
+        }
+
+        return null;
     }
 }

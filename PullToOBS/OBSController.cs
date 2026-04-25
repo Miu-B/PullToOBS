@@ -1,10 +1,11 @@
 using System;
-using System.Timers;
+using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using Dalamud.Plugin.Services;
 using OBSWebsocketDotNet;
 using OBSWebsocketDotNet.Communication;
+using OBSWebsocketDotNet.Types.Events;
 
 namespace PullToOBS;
 
@@ -15,8 +16,10 @@ public class OBSController : IOBSController
 
     private readonly OBSWebsocket _obs;
     private readonly IPluginLog _log;
+    private readonly object _replayBufferSaveLock = new();
     private bool _isDisposed;
     private System.Timers.Timer? _statePollingTimer;
+    private TaskCompletionSource<string?>? _pendingReplayBufferSave;
 
     // Tracks consecutive polling failures for escalation.
     private int _consecutivePollFailures;
@@ -42,6 +45,7 @@ public class OBSController : IOBSController
         _obs = new OBSWebsocket();
         _obs.Connected += OnConnected;
         _obs.Disconnected += OnDisconnected;
+        _obs.ReplayBufferSaved += OnReplayBufferSaved;
     }
 
     public async Task ConnectAsync(string url, string password)
@@ -219,12 +223,59 @@ public class OBSController : IOBSController
             });
     }
 
-    public void SaveReplayBuffer()
+    public async Task<string?> SaveReplayBuffer()
     {
         _log.Debug($"[OBS] SaveReplayBuffer called: IsConnected={_obs.IsConnected}, IsReplayBufferActive={_isReplayBufferActive}");
-        ExecuteObsAction(
-            "SaveReplayBuffer",
-            () => _obs.SaveReplayBuffer());
+
+        if (!_obs.IsConnected)
+        {
+            _log.Debug("[OBS] SaveReplayBuffer: not connected, skipping");
+            return null;
+        }
+
+        Task<string?> pendingReplayBufferSaveTask;
+        TaskCompletionSource<string?>? replayBufferSaveTcs = null;
+
+        lock (_replayBufferSaveLock)
+        {
+            if (_pendingReplayBufferSave is null)
+            {
+                replayBufferSaveTcs = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
+                _pendingReplayBufferSave = replayBufferSaveTcs;
+                pendingReplayBufferSaveTask = replayBufferSaveTcs.Task;
+            }
+            else
+            {
+                pendingReplayBufferSaveTask = _pendingReplayBufferSave.Task;
+            }
+        }
+
+        if (replayBufferSaveTcs is not null)
+        {
+            try
+            {
+                _obs.SaveReplayBuffer();
+                _log.Debug("[OBS] SaveReplayBuffer: request sent");
+            }
+            catch (Exception ex)
+            {
+                lock (_replayBufferSaveLock)
+                {
+                    if (ReferenceEquals(_pendingReplayBufferSave, replayBufferSaveTcs))
+                        _pendingReplayBufferSave = null;
+                }
+
+                _log.Error($"[OBS] SaveReplayBuffer failed: {ex}");
+                ErrorOccurred?.Invoke($"Failed to SaveReplayBuffer: {ex.Message}");
+                throw;
+            }
+        }
+        else
+        {
+            _log.Debug("[OBS] SaveReplayBuffer: request already pending, waiting for saved file path");
+        }
+
+        return await AwaitReplayBufferSaveAsync(pendingReplayBufferSaveTask);
     }
 
     public void StartRecording()
@@ -240,28 +291,30 @@ public class OBSController : IOBSController
             });
     }
 
-    public void StopRecording()
+    public string? StopRecording()
     {
         _log.Debug($"[OBS] StopRecording called: IsConnected={_obs.IsConnected}, IsRecording={_isRecording}");
 
         if (!_obs.IsConnected)
         {
             _log.Debug("[OBS] StopRecording: not connected, skipping");
-            return;
+            return null;
         }
 
         try
         {
-            _obs.StopRecord();
+            var outputPath = NormalizeOutputPath(_obs.StopRecord());
             _isRecording = false;
             RecordingStateChanged?.Invoke();
-            _log.Debug("[OBS] StopRecording: succeeded");
+            _log.Debug($"[OBS] StopRecording: succeeded (path={outputPath ?? "<null>"})");
+            return outputPath;
         }
         catch (Exception ex) when (IsNotRecordingError(ex))
         {
             _log.Debug("[OBS] StopRecording: recording was already stopped (501), treating as success");
             _isRecording = false;
             RecordingStateChanged?.Invoke();
+            return null;
         }
         catch (Exception ex)
         {
@@ -269,6 +322,46 @@ public class OBSController : IOBSController
             ErrorOccurred?.Invoke($"Failed to StopRecording: {ex.Message}");
             throw;
         }
+    }
+
+    private async Task<string?> AwaitReplayBufferSaveAsync(Task<string?> replayBufferSaveTask)
+    {
+        var completedTask = await Task.WhenAny(replayBufferSaveTask, Task.Delay(TimeSpan.FromSeconds(5)));
+        if (completedTask != replayBufferSaveTask)
+        {
+            lock (_replayBufferSaveLock)
+            {
+                if (_pendingReplayBufferSave?.Task == replayBufferSaveTask)
+                    _pendingReplayBufferSave = null;
+            }
+
+            _log.Warning("[OBS] SaveReplayBuffer: timed out waiting for saved file path");
+            return null;
+        }
+
+        return await replayBufferSaveTask;
+    }
+
+    private string? NormalizeOutputPath(string? outputPath)
+    {
+        if (string.IsNullOrWhiteSpace(outputPath))
+            return null;
+
+        if (Path.IsPathRooted(outputPath))
+            return outputPath;
+
+        try
+        {
+            var recordDirectory = _obs.GetRecordDirectory();
+            if (!string.IsNullOrWhiteSpace(recordDirectory))
+                return Path.Combine(recordDirectory, outputPath);
+        }
+        catch (Exception ex)
+        {
+            _log.Debug($"[OBS] NormalizeOutputPath: failed to resolve record directory ({ex.GetType().Name}: {ex.Message})");
+        }
+
+        return outputPath;
     }
 
     /// <summary>
@@ -323,6 +416,21 @@ public class OBSController : IOBSController
         ConnectionStateChanged?.Invoke();
     }
 
+    private void OnReplayBufferSaved(object? sender, ReplayBufferSavedEventArgs e)
+    {
+        var outputPath = NormalizeOutputPath(e.SavedReplayPath);
+        TaskCompletionSource<string?>? replayBufferSaveTcs;
+
+        lock (_replayBufferSaveLock)
+        {
+            replayBufferSaveTcs = _pendingReplayBufferSave;
+            _pendingReplayBufferSave = null;
+        }
+
+        _log.Debug($"[OBS] ReplayBufferSaved event received (path={outputPath ?? "<null>"})");
+        replayBufferSaveTcs?.TrySetResult(outputPath);
+    }
+
     private void OnDisconnected(object? sender, ObsDisconnectionInfo e)
     {
         _log.Warning($"[OBS] Disconnected from OBS. Reason: {e.DisconnectReason ?? "unknown"}");
@@ -330,6 +438,15 @@ public class OBSController : IOBSController
         _isReplayBufferActive = false;
         _consecutivePollFailures = 0;
         StopStatePolling();
+
+        TaskCompletionSource<string?>? replayBufferSaveTcs;
+        lock (_replayBufferSaveLock)
+        {
+            replayBufferSaveTcs = _pendingReplayBufferSave;
+            _pendingReplayBufferSave = null;
+        }
+
+        replayBufferSaveTcs?.TrySetResult(null);
         ConnectionStateChanged?.Invoke();
     }
 
@@ -341,6 +458,16 @@ public class OBSController : IOBSController
 
         _obs.Connected -= OnConnected;
         _obs.Disconnected -= OnDisconnected;
+        _obs.ReplayBufferSaved -= OnReplayBufferSaved;
+
+        TaskCompletionSource<string?>? replayBufferSaveTcs;
+        lock (_replayBufferSaveLock)
+        {
+            replayBufferSaveTcs = _pendingReplayBufferSave;
+            _pendingReplayBufferSave = null;
+        }
+
+        replayBufferSaveTcs?.TrySetResult(null);
 
         if (_obs.IsConnected)
             _obs.Disconnect();

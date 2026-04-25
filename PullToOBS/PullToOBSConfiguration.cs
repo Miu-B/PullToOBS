@@ -21,6 +21,8 @@ public class PullToOBSConfiguration : IPluginConfiguration
 
     public bool HideIndicator { get; set; } = false;
 
+    public bool SaveEncounterMetadata { get; set; } = false;
+
     /// <summary>
     /// Delegate used to persist this configuration. Injected by the plugin at startup
     /// to avoid static coupling to the plugin interface.

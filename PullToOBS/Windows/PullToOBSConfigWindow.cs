@@ -143,6 +143,16 @@ public class PullToOBSConfigWindow : Window, IDisposable
         }
 
         ImGui.Spacing();
+
+        var saveEncounterMetadata = _configuration.SaveEncounterMetadata;
+        if (ImGui.Checkbox("Save encounter metadata", ref saveEncounterMetadata))
+        {
+            _configuration.SaveEncounterMetadata = saveEncounterMetadata;
+            _configuration.Save();
+        }
+        ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1.0f), "Writes a JSON file alongside each recording for use with the limitcut tool");
+
+        ImGui.Spacing();
         ImGui.Separator();
         ImGui.Spacing();
 

@@ -11,6 +11,8 @@ namespace PullToOBS.Tests;
 public class EncounterManagerTests : IDisposable
 {
     private readonly IOBSController _obs;
+    private readonly IClientState _clientState;
+    private readonly IPlayerState _playerState;
     private readonly ICondition _condition;
     private readonly IPluginLog _log;
     private readonly EncounterManager _sut;
@@ -20,6 +22,8 @@ public class EncounterManagerTests : IDisposable
     public EncounterManagerTests()
     {
         _obs = Substitute.For<IOBSController>();
+        _clientState = Substitute.For<IClientState>();
+        _playerState = Substitute.For<IPlayerState>();
         _condition = Substitute.For<ICondition>();
         _log = Substitute.For<IPluginLog>();
 
@@ -27,12 +31,15 @@ public class EncounterManagerTests : IDisposable
         _obs.IsConnected.Returns(true);
         _obs.IsRecording.Returns(false);
         _obs.IsReplayBufferConfigured.Returns(false);
+        _obs.SaveReplayBuffer().Returns(Task.FromResult<string?>("replay.mkv"));
+        _obs.StopRecording().Returns("recording.mkv");
+        _clientState.TerritoryType.Returns((ushort)987);
 
         // Default: not in combat
         _inCombat = false;
         _condition[ConditionFlag.InCombat].Returns(_ => _inCombat);
 
-        _sut = new EncounterManager(_obs, _condition, _log);
+        _sut = new EncounterManager(_obs, _clientState, _playerState, _condition, _log);
     }
 
     public void Dispose()
@@ -171,7 +178,7 @@ public class EncounterManagerTests : IDisposable
         await Task.Delay(6000);
 
         // SaveReplayBuffer should NOT have been called because disposal cancelled the timer
-        _obs.DidNotReceive().SaveReplayBuffer();
+        _ = _obs.DidNotReceive().SaveReplayBuffer();
     }
 
     [Fact]
@@ -200,7 +207,7 @@ public class EncounterManagerTests : IDisposable
         // Wait for the replay buffer save delay (5s) + margin
         await Task.Delay(6500);
 
-        _obs.Received(1).SaveReplayBuffer();
+        await _obs.Received(1).SaveReplayBuffer();
     }
 
     [Fact]
@@ -214,7 +221,7 @@ public class EncounterManagerTests : IDisposable
         SetCombatState(true);
         await Task.Delay(6500);
 
-        _obs.DidNotReceive().SaveReplayBuffer();
+        _ = _obs.DidNotReceive().SaveReplayBuffer();
     }
 
     [Fact]
@@ -288,7 +295,7 @@ public class EncounterManagerTests : IDisposable
         _obs.IsRecording.Returns(true);
 
         var encounterEndedFired = false;
-        _sut.EncounterEnded += () => encounterEndedFired = true;
+        _sut.EncounterEnded += _ => encounterEndedFired = true;
 
         // Enter combat
         SetCombatState(true);
@@ -316,7 +323,7 @@ public class EncounterManagerTests : IDisposable
         _obs.IsRecording.Returns(false);
 
         var encounterEndedFired = false;
-        _sut.EncounterEnded += () => encounterEndedFired = true;
+        _sut.EncounterEnded += _ => encounterEndedFired = true;
 
         // Enter then leave combat
         SetCombatState(true);
@@ -324,6 +331,28 @@ public class EncounterManagerTests : IDisposable
 
         // EncounterEnded fires synchronously (no timer involved)
         Assert.True(encounterEndedFired);
+    }
+
+    [Fact]
+    public async Task LeavingCombat_EncounterEndedIncludesPathsAndTerritoryType()
+    {
+        _obs.IsReplayBufferConfigured.Returns(true);
+        _obs.When(x => x.StartRecording()).Do(_ => _obs.IsRecording.Returns(true));
+
+        EncounterRecord? encounterRecord = null;
+        _sut.EncounterEnded += record => encounterRecord = record;
+
+        SetCombatState(true);
+        await Task.Delay(6500);
+
+        SetCombatState(false);
+        await Task.Delay(6500);
+
+        Assert.NotNull(encounterRecord);
+        Assert.Equal(987u, encounterRecord!.TerritoryType);
+        Assert.Null(encounterRecord.JobAbbreviation);
+        Assert.Equal("recording.mkv", encounterRecord.RecordingPath);
+        Assert.Equal("replay.mkv", encounterRecord.ReplayBufferPath);
     }
 
     [Fact]
