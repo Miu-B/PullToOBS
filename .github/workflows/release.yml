@@ -31,13 +31,16 @@ jobs:
         run: dotnet restore --verbosity normal
 
       - name: Build Release
-        run: dotnet build --no-restore --verbosity normal --configuration Release -p:Version=${{ github.ref_name }}
+        shell: pwsh
+        run: |
+          $v = "${{ github.ref_name }}" -replace '^v', ''
+          dotnet build --no-restore --verbosity normal --configuration Release -p:Version=$v
 
       - name: Run tests
         run: dotnet test --configuration Release --no-build --verbosity normal
 
       - name: Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v1
         with:
           files: PullToOBS/bin/Release/PullToOBS/latest.zip
           name: PullToOBS ${{ github.ref_name }}
