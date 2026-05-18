@@ -56,7 +56,7 @@ public sealed class PullToOBSPlugin : IDalamudPlugin
         ConfigWindow = new PullToOBSConfigWindow(this, ChatGui);
         WindowSystem.AddWindow(ConfigWindow);
 
-        _indicator = new OBSStatusIndicator(this, ClientState, Condition);
+        _indicator = new OBSStatusIndicator(this, ClientState, Condition, ChatGui);
         WindowSystem.AddWindow(_indicator);
 
         EnsureIndicatorFont();
@@ -100,9 +100,16 @@ public sealed class PullToOBSPlugin : IDalamudPlugin
         }
         else if (trimmedArgs == "rec")
         {
-            EncounterManager.IsStandby = !EncounterManager.IsStandby;
-            var state = EncounterManager.IsStandby ? "ON - recording suppressed" : "OFF - recording enabled";
-            ChatGui.Print($"[PullToOBS] Standby mode: {state}");
+            if (EncounterManager.IsInCombat)
+            {
+                ChatGui.Print("[PullToOBS] Cannot toggle standby mode during combat");
+            }
+            else
+            {
+                EncounterManager.IsStandby = !EncounterManager.IsStandby;
+                var state = EncounterManager.IsStandby ? "ON - recording suppressed" : "OFF - recording enabled";
+                ChatGui.Print($"[PullToOBS] Standby mode: {state}");
+            }
         }
         else
         {

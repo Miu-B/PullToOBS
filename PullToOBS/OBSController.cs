@@ -114,17 +114,20 @@ public class OBSController : IOBSController
             anyFailure = true;
         }
 
-        try
+        if (_isReplayBufferConfigured)
         {
-            var wasActive = _isReplayBufferActive;
-            _isReplayBufferActive = _obs.GetReplayBufferStatus();
-            if (wasActive != _isReplayBufferActive)
-                ReplayBufferStateChanged?.Invoke();
-        }
-        catch (Exception ex)
-        {
-            _log.Debug($"[OBS] PollState replay buffer error: {ex.GetType().Name}: {ex.Message}");
-            anyFailure = true;
+            try
+            {
+                var wasActive = _isReplayBufferActive;
+                _isReplayBufferActive = _obs.GetReplayBufferStatus();
+                if (wasActive != _isReplayBufferActive)
+                    ReplayBufferStateChanged?.Invoke();
+            }
+            catch (Exception ex)
+            {
+                _log.Debug($"[OBS] PollState replay buffer error: {ex.GetType().Name}: {ex.Message}");
+                anyFailure = true;
+            }
         }
 
         if (anyFailure)

@@ -115,7 +115,7 @@ public class PullToOBSConfigWindow : Window, IDisposable
         {
             ImGui.TextColored(
                 new Vector4(1.0f, 0.6f, 0.0f, 1.0f),
-                "Warning: Please configure Replay Buffer in OBS (Settings > Output > Replay Buffer)");
+                "Warning: Replay Buffer is not ready in OBS. Enable it in OBS (Settings > Output > Replay Buffer), then disconnect and reconnect PullToOBS.");
         }
 
         ImGui.Spacing();
@@ -170,36 +170,39 @@ public class PullToOBSConfigWindow : Window, IDisposable
     private void UpdateStatus()
     {
         var obs = _plugin.ObsController;
+        var status = ObsStatusEvaluator.Evaluate(
+            isConnecting: _isConnecting,
+            isConnected: obs.IsConnected,
+            isRecording: obs.IsRecording,
+            isStandby: _plugin.EncounterManager.IsStandby,
+            isReplayBufferActive: obs.IsReplayBufferActive);
 
-        if (_isConnecting)
+        switch (status)
         {
-            _statusMessage = "Connecting...";
-            _statusColor = new Vector4(0.8f, 0.8f, 0.0f, 1.0f);
-        }
-        else if (obs.IsRecording)
-        {
-            _statusMessage = "Recording";
-            _statusColor = new Vector4(1.0f, 0.0f, 0.0f, 1.0f);
-        }
-        else if (obs.IsConnected && _plugin.EncounterManager.IsStandby)
-        {
-            _statusMessage = "Standby";
-            _statusColor = new Vector4(0.0f, 1.0f, 0.0f, 1.0f);
-        }
-        else if (obs.IsReplayBufferActive)
-        {
-            _statusMessage = "Replay Buffer Active";
-            _statusColor = new Vector4(1.0f, 0.6f, 0.0f, 1.0f);
-        }
-        else if (obs.IsConnected)
-        {
-            _statusMessage = "Connected";
-            _statusColor = new Vector4(0.0f, 1.0f, 0.0f, 1.0f);
-        }
-        else
-        {
-            _statusMessage = "Not Connected";
-            _statusColor = new Vector4(0.5f, 0.5f, 0.5f, 1.0f);
+            case ObsStatusKind.Connecting:
+                _statusMessage = "Connecting...";
+                _statusColor = new Vector4(0.8f, 0.8f, 0.0f, 1.0f);
+                break;
+            case ObsStatusKind.Disconnected:
+                _statusMessage = "Not Connected";
+                _statusColor = new Vector4(0.5f, 0.5f, 0.5f, 1.0f);
+                break;
+            case ObsStatusKind.Recording:
+                _statusMessage = "Recording";
+                _statusColor = new Vector4(1.0f, 0.0f, 0.0f, 1.0f);
+                break;
+            case ObsStatusKind.Standby:
+                _statusMessage = "Standby";
+                _statusColor = new Vector4(0.0f, 1.0f, 1.0f, 1.0f);
+                break;
+            case ObsStatusKind.ReplayBufferInactive:
+                _statusMessage = "Replay Buffer Inactive";
+                _statusColor = new Vector4(1.0f, 0.6f, 0.0f, 1.0f);
+                break;
+            default:
+                _statusMessage = "Connected & Ready";
+                _statusColor = new Vector4(0.0f, 1.0f, 0.0f, 1.0f);
+                break;
         }
     }
 

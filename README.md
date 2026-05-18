@@ -20,10 +20,12 @@ I already had [rec-cue](https://github.com/Miu-B/rec-cue) to show me an in-game 
 
 * **Visual Status Indicator** -- know what OBS is doing at a glance
   * Always-visible on-screen dot showing the current OBS state
-  * **Red pulsing dot**: Recording in progress
-  * **Orange dot**: Replay buffer active (connected, not recording)
-  * **Green dot**: Connected to OBS
-  * **Grey dot**: Not connected
+  * **Grey dot**: Not connected to OBS
+  * **Green dot**: Connected & ready (replay buffer active)
+  * **Orange dot**: Connected but replay buffer inactive or not configured
+  * **Cyan dot**: Standby mode on (recording suppressed)
+  * **Pulsing red dot**: Recording in progress
+  * **Click** the indicator while out of combat to toggle standby mode
   * Draggable when the config window is open
   * Adjustable scale (0.5x - 2.0x)
 
@@ -51,8 +53,9 @@ PullToOBS can optionally generate JSON metadata files alongside recordings, whic
 * **Replay Buffer enabled in OBS** (OBS > Settings > Output > Replay Buffer)
 
 > **The Replay Buffer must be enabled in OBS before connecting.** This is what captures the prepull clip.
-> You can confirm it's active by the indicator turning **orange** after connecting. If the indicator stays
-> **green** instead of orange, go into OBS Settings > Output > Replay Buffer and enable it, then reconnect.
+> You can confirm it's active by the indicator turning **green** after connecting. If the indicator shows
+> **orange** instead, open OBS Settings > Output > Replay Buffer and enable it, then reconnect.
+> If PullToOBS was already connected when you enabled Replay Buffer in OBS, disconnect and reconnect PullToOBS so it can detect the buffer and return to the ready state.
 
 ## Installation
 
@@ -68,7 +71,7 @@ Open the Plugin Installer in-game (`/xlplugins`), search for **PullToOBS**, and 
 2. Set up a Replay Buffer in OBS (Settings > Output > Replay Buffer) -- this is what captures the prepull
 3. Open PullToOBS config with `/pulltoobs` or `/pto`
 4. Enter your OBS WebSocket URL and password, then click Connect
-5. The indicator shows up on screen -- you're good to go
+5. The indicator shows up on screen -- **green** means ready, **orange** means replay buffer is not ready yet
 6. Enter combat and recording starts automatically
 7. (Optional) Check **"Save encounter metadata"** in the config window if you use limitcut — a JSON file will be written alongside each recording
 
@@ -76,7 +79,7 @@ Open the Plugin Installer in-game (`/xlplugins`), search for **PullToOBS**, and 
 
 * `/pulltoobs` or `/pto` - Toggle the configuration window
 * `/pulltoobs obs` or `/pto obs` - Toggle OBS connection
-* `/pulltoobs rec` or `/pto rec` - Toggle standby mode (suppresses automatic recording)
+* `/pulltoobs rec` or `/pto rec` - Toggle standby mode (suppresses automatic recording; command is blocked during combat)
 * `/pulltoobs show` or `/pto show` - Show the indicator
 * `/pulltoobs hide` or `/pto hide` - Hide the indicator
 
@@ -86,6 +89,8 @@ Open the Plugin Installer in-game (`/xlplugins`), search for **PullToOBS**, and 
 2. While the configuration window is open, drag the indicator to your desired position
 3. Use the "Indicator Scale" slider to adjust size
 4. Position is saved automatically when you finish dragging
+5. While the config window is **closed** and you are **out of combat**, click the indicator to toggle standby mode
+6. During combat, the indicator becomes click-through again
 
 ## Configuration
 

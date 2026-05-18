@@ -13,6 +13,7 @@ public class OBSStatusIndicator : Window, IDisposable
     private readonly PullToOBSPlugin _plugin;
     private readonly IClientState _clientState;
     private readonly ICondition _condition;
+    private readonly IChatGui _chatGui;
 
     private bool _dragging;
     private Vector2 _dragOffset;
@@ -32,12 +33,13 @@ public class OBSStatusIndicator : Window, IDisposable
         ImGuiWindowFlags.NoFocusOnAppearing |
         ImGuiWindowFlags.NoBringToFrontOnFocus;
 
-    public OBSStatusIndicator(PullToOBSPlugin plugin, IClientState clientState, ICondition condition)
+    public OBSStatusIndicator(PullToOBSPlugin plugin, IClientState clientState, ICondition condition, IChatGui chatGui)
         : base("###PullToOBSIndicator", BaseFlags)
     {
         _plugin = plugin;
         _clientState = clientState;
         _condition = condition;
+        _chatGui = chatGui;
 
         // Keep the window permanently open; visibility is controlled via DrawConditions.
         IsOpen = true;
@@ -90,9 +92,10 @@ public class OBSStatusIndicator : Window, IDisposable
     /// </summary>
     public override void PreDraw()
     {
-        // Toggle NoInputs depending on whether the config window is open (unlock mode).
+        // Allow input while dragging in config mode or toggling standby out of combat.
         var unlocked = _plugin.ConfigWindow.IsOpen;
-        Flags = unlocked ? BaseFlags : BaseFlags | ImGuiWindowFlags.NoInputs;
+        var clickable = !_plugin.EncounterManager.IsInCombat;
+        Flags = unlocked || clickable ? BaseFlags : BaseFlags | ImGuiWindowFlags.NoInputs;
 
         var scale = _plugin.Configuration.IndicatorScale;
         var pos = _plugin.Configuration.IndicatorPosition;
@@ -185,26 +188,39 @@ public class OBSStatusIndicator : Window, IDisposable
         else
         {
             _dragging = false;
+
+            if (ImGui.IsWindowHovered() && ImGui.IsMouseClicked(ImGuiMouseButton.Left))
+            {
+                _plugin.EncounterManager.IsStandby = !_plugin.EncounterManager.IsStandby;
+                var state = _plugin.EncounterManager.IsStandby ? "ON - recording suppressed" : "OFF - recording enabled";
+                _chatGui.Print($"[PullToOBS] Standby mode: {state}");
+            }
         }
     }
 
     private Vector4 GetStatusColor()
     {
         var obs = _plugin.ObsController;
+        var status = ObsStatusEvaluator.Evaluate(
+            isConnecting: false,
+            isConnected: obs.IsConnected,
+            isRecording: obs.IsRecording,
+            isStandby: _plugin.EncounterManager.IsStandby,
+            isReplayBufferActive: obs.IsReplayBufferActive);
 
-        if (obs.IsRecording)
+        if (status == ObsStatusKind.Disconnected)
+            return new Vector4(0.5f, 0.5f, 0.5f, 1.0f);
+
+        if (status == ObsStatusKind.Recording)
             return GetPulsingRedColor();
 
-        if (obs.IsConnected && _plugin.EncounterManager.IsStandby)
-            return new Vector4(0.0f, 1.0f, 0.0f, 1.0f);
+        if (status == ObsStatusKind.Standby)
+            return new Vector4(0.0f, 1.0f, 1.0f, 1.0f);
 
-        if (obs.IsReplayBufferActive)
+        if (status == ObsStatusKind.ReplayBufferInactive)
             return new Vector4(1.0f, 0.6f, 0.0f, 1.0f);
 
-        if (obs.IsConnected)
-            return new Vector4(0.0f, 1.0f, 0.0f, 1.0f);
-
-        return new Vector4(0.5f, 0.5f, 0.5f, 1.0f);
+        return new Vector4(0.0f, 1.0f, 0.0f, 1.0f);
     }
 
     private static Vector4 GetPulsingRedColor()
