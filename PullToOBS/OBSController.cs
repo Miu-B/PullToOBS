@@ -28,6 +28,7 @@ public class OBSController : IOBSController
     private volatile bool _isRecording;
     private volatile bool _isReplayBufferActive;
     private volatile bool _isReplayBufferConfigured;
+    private volatile bool _startedReplayBufferThisSession;
 
     public bool IsConnected => _obs.IsConnected;
     public bool IsRecording => _isRecording;
@@ -150,6 +151,7 @@ public class OBSController : IOBSController
     {
         _log.Information("[OBS] Disconnecting from OBS (user-initiated)");
         StopStatePolling();
+        StopOwnedReplayBufferIfNeeded();
 
         if (_obs.IsConnected)
             _obs.Disconnect();
@@ -169,12 +171,14 @@ public class OBSController : IOBSController
             var isActive = _obs.GetReplayBufferStatus();
             _isReplayBufferConfigured = true;
             _isReplayBufferActive = isActive;
+            _startedReplayBufferThisSession = false;
         }
         catch (Exception ex)
         {
             _log.Debug($"[OBS] CheckReplayBufferConfiguration: not configured ({ex.GetType().Name}: {ex.Message})");
             _isReplayBufferConfigured = false;
             _isReplayBufferActive = false;
+            _startedReplayBufferThisSession = false;
         }
     }
 
@@ -186,6 +190,7 @@ public class OBSController : IOBSController
         {
             _obs.StartReplayBuffer();
             _isReplayBufferActive = true;
+            _startedReplayBufferThisSession = true;
             ReplayBufferStateChanged?.Invoke();
             _log.Debug("[OBS] TryStartReplayBuffer: started successfully");
         }
@@ -193,6 +198,7 @@ public class OBSController : IOBSController
         {
             _log.Debug("[OBS] TryStartReplayBuffer: replay buffer was already running");
             _isReplayBufferActive = true;
+            _startedReplayBufferThisSession = false;
             ReplayBufferStateChanged?.Invoke();
         }
         catch (Exception ex)
@@ -210,6 +216,7 @@ public class OBSController : IOBSController
             {
                 _obs.StartReplayBuffer();
                 _isReplayBufferActive = true;
+                _startedReplayBufferThisSession = true;
                 ReplayBufferStateChanged?.Invoke();
             });
     }
@@ -222,8 +229,35 @@ public class OBSController : IOBSController
             {
                 _obs.StopReplayBuffer();
                 _isReplayBufferActive = false;
+                _startedReplayBufferThisSession = false;
                 ReplayBufferStateChanged?.Invoke();
             });
+    }
+
+    private void StopOwnedReplayBufferIfNeeded()
+    {
+        if (!_obs.IsConnected || !_isReplayBufferActive || !_startedReplayBufferThisSession)
+            return;
+
+        try
+        {
+            _obs.StopReplayBuffer();
+            _isReplayBufferActive = false;
+            _startedReplayBufferThisSession = false;
+            ReplayBufferStateChanged?.Invoke();
+            _log.Debug("[OBS] StopOwnedReplayBufferIfNeeded: stopped plugin-owned replay buffer");
+        }
+        catch (Exception ex) when (IsNotRecordingError(ex))
+        {
+            _log.Debug("[OBS] StopOwnedReplayBufferIfNeeded: replay buffer was already stopped (501)");
+            _isReplayBufferActive = false;
+            _startedReplayBufferThisSession = false;
+            ReplayBufferStateChanged?.Invoke();
+        }
+        catch (Exception ex)
+        {
+            _log.Warning($"[OBS] StopOwnedReplayBufferIfNeeded: failed to stop plugin-owned replay buffer: {ex.Message}");
+        }
     }
 
     public async Task<string?> SaveReplayBuffer()
@@ -439,6 +473,7 @@ public class OBSController : IOBSController
         _log.Warning($"[OBS] Disconnected from OBS. Reason: {e.DisconnectReason ?? "unknown"}");
         _isRecording = false;
         _isReplayBufferActive = false;
+        _startedReplayBufferThisSession = false;
         _consecutivePollFailures = 0;
         StopStatePolling();
 
@@ -459,6 +494,8 @@ public class OBSController : IOBSController
 
         StopStatePolling();
 
+        StopOwnedReplayBufferIfNeeded();
+
         _obs.Connected -= OnConnected;
         _obs.Disconnected -= OnDisconnected;
         _obs.ReplayBufferSaved -= OnReplayBufferSaved;
@@ -475,6 +512,7 @@ public class OBSController : IOBSController
         if (_obs.IsConnected)
             _obs.Disconnect();
 
+        _startedReplayBufferThisSession = false;
         _isDisposed = true;
     }
 }

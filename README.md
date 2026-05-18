@@ -16,6 +16,7 @@ I already had [rec-cue](https://github.com/Miu-B/rec-cue) to show me an in-game 
 * **Replay Buffer Integration** -- never miss the prepull
   * Automatically starts the OBS replay buffer when the plugin connects
   * Saves the replay buffer 5 seconds into the encounter, capturing everything that happened before the pull
+  * If PullToOBS started the replay buffer, it will stop it again when you disconnect the plugin or unload it
   * You'll end up with two files per encounter: a replay buffer clip (prepull) and a full recording
 
 * **Visual Status Indicator** -- know what OBS is doing at a glance
@@ -99,6 +100,7 @@ All settings are saved automatically, so you can just set things up once and for
 * **WebSocket URL** - OBS WebSocket server address (default: `ws://localhost:4455`)
 * **Password** - OBS WebSocket server password
 * **Auto-connect on start** - Automatically connect to OBS when the plugin loads
+* **Disconnect behavior** - If PullToOBS started OBS replay buffer, disconnecting/unloading PullToOBS stops it again; pre-existing replay buffer sessions are left alone
 * **Indicator Scale** - Scale multiplier for the indicator (0.5x to 2.0x)
 * **Hide Indicator** - Toggle indicator visibility
 * **Save encounter metadata** - Toggle JSON metadata file generation for use with limitcut (default: disabled)
