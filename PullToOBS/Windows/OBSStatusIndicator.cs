@@ -19,6 +19,9 @@ public class OBSStatusIndicator : Window, IDisposable
     private Vector2 _dragOffset;
 
     private const float DotSize = 22.0f;
+    private const int QuickSaveFlashDurationMs = 400;
+
+    private DateTime _quickSaveFlashUntil = DateTime.MinValue;
 
     /// <summary>
     /// Flags that are always present on this window.
@@ -198,8 +201,27 @@ public class OBSStatusIndicator : Window, IDisposable
         }
     }
 
+    /// <summary>
+    /// Triggers a brief gold flash on the status dot to confirm a quick-save.
+    /// Called when the instapost hotkey is pressed.
+    /// </summary>
+    public void TriggerQuickSaveFlash()
+    {
+        _quickSaveFlashUntil = DateTime.Now.AddMilliseconds(QuickSaveFlashDurationMs);
+    }
+
     private Vector4 GetStatusColor()
     {
+        // Gold flash for quick-save feedback — overrides normal colors briefly
+        if (DateTime.Now < _quickSaveFlashUntil)
+        {
+            var elapsed = (DateTime.Now -
+                (_quickSaveFlashUntil.AddMilliseconds(-QuickSaveFlashDurationMs))).TotalMilliseconds;
+            var t = Math.Clamp(elapsed / QuickSaveFlashDurationMs, 0.0, 1.0);
+            var alpha = 1.0f - (float)t;
+            return new Vector4(1.0f, 0.84f, 0.0f, alpha);
+        }
+
         var obs = _plugin.ObsController;
         var status = ObsStatusEvaluator.Evaluate(
             isConnecting: false,

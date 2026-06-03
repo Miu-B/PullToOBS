@@ -20,6 +20,7 @@ public class OBSController : IOBSController
     private bool _isDisposed;
     private System.Timers.Timer? _statePollingTimer;
     private TaskCompletionSource<string?>? _pendingReplayBufferSave;
+    private volatile bool _connectionAttemptInProgress;
 
     // Tracks consecutive polling failures for escalation.
     private int _consecutivePollFailures;
@@ -49,7 +50,7 @@ public class OBSController : IOBSController
         _obs.ReplayBufferSaved += OnReplayBufferSaved;
     }
 
-    public async Task ConnectAsync(string url, string password)
+    public async Task ConnectAsync(string url, string password, bool suppressFailureNotification = false)
     {
         if (_obs.IsConnected)
             Disconnect();
@@ -65,8 +66,25 @@ public class OBSController : IOBSController
 
         try
         {
+            _connectionAttemptInProgress = true;
             _log.Information($"[OBS] Connecting to {url} (password {(string.IsNullOrEmpty(password) ? "not set" : "set")})...");
-            _obs.ConnectAsync(url, password);
+
+#pragma warning disable CS0618 // OBSWebsocket.Connect is obsolete, but the async overload returns void and can fault unobserved.
+            var connectTask = Task.Run(() => _obs.Connect(url, password));
+#pragma warning restore CS0618
+            _ = connectTask.ContinueWith(
+                task =>
+                {
+                    var _ = task.Exception;
+                },
+                CancellationToken.None,
+                TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
+
+            var completedTask = await Task.WhenAny(tcs.Task, connectTask);
+            if (completedTask == connectTask)
+                await connectTask;
+
             await tcs.Task;
 
             CheckReplayBufferConfiguration();
@@ -77,12 +95,21 @@ public class OBSController : IOBSController
         }
         catch (Exception ex)
         {
-            _log.Error($"[OBS] Failed to connect: {ex}");
-            ErrorOccurred?.Invoke($"Failed to connect to OBS: {ex.Message}");
+            if (suppressFailureNotification)
+            {
+                _log.Information($"[OBS] ConnectAsync: auto-connect failed, remaining disconnected ({GetInnermostMessage(ex)})");
+            }
+            else
+            {
+                _log.Error($"[OBS] Failed to connect: {ex}");
+                ErrorOccurred?.Invoke($"Failed to connect to OBS: {ex.Message}");
+            }
+
             throw;
         }
         finally
         {
+            _connectionAttemptInProgress = false;
             _obs.Connected -= OnConnected;
             _obs.Disconnected -= OnDisconnected;
         }
@@ -447,6 +474,15 @@ public class OBSController : IOBSController
                (ex.InnerException?.Message.Contains("501") ?? false);
     }
 
+    private static string GetInnermostMessage(Exception ex)
+    {
+        var current = ex;
+        while (current.InnerException is not null)
+            current = current.InnerException;
+
+        return current.Message;
+    }
+
     private void OnConnected(object? sender, EventArgs e)
     {
         _log.Debug("[OBS] WebSocket connected event received");
@@ -470,7 +506,10 @@ public class OBSController : IOBSController
 
     private void OnDisconnected(object? sender, ObsDisconnectionInfo e)
     {
-        _log.Warning($"[OBS] Disconnected from OBS. Reason: {e.DisconnectReason ?? "unknown"}");
+        if (_connectionAttemptInProgress)
+            _log.Debug($"[OBS] Connection attempt ended in disconnected state. Reason: {e.DisconnectReason ?? "unknown"}");
+        else
+            _log.Warning($"[OBS] Disconnected from OBS. Reason: {e.DisconnectReason ?? "unknown"}");
         _isRecording = false;
         _isReplayBufferActive = false;
         _startedReplayBufferThisSession = false;

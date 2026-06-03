@@ -2,6 +2,7 @@ using System;
 using System.Numerics;
 using System.Threading.Tasks;
 using Dalamud.Bindings.ImGui;
+using Dalamud.Game.ClientState.Keys;
 using Dalamud.Interface.Windowing;
 using Dalamud.Plugin.Services;
 
@@ -12,18 +13,24 @@ public class PullToOBSConfigWindow : Window, IDisposable
     private readonly PullToOBSPlugin _plugin;
     private readonly PullToOBSConfiguration _configuration;
     private readonly IChatGui _chatGui;
+    private readonly IKeyState _keyState;
 
     private string _urlBuffer;
     private string _passwordBuffer;
     private bool _isConnecting;
+    private bool _capturingInstapostHotkey;
+    private bool _instapostCaptureArmed;
     private string _statusMessage = "";
     private Vector4 _statusColor = new Vector4(0.5f, 0.5f, 0.5f, 1.0f);
 
-    public PullToOBSConfigWindow(PullToOBSPlugin plugin, IChatGui chatGui) : base("PullToOBS Configuration")
+    public bool IsCapturingInstapostHotkey => _capturingInstapostHotkey;
+
+    public PullToOBSConfigWindow(PullToOBSPlugin plugin, IChatGui chatGui, IKeyState keyState) : base("PullToOBS Configuration")
     {
         _plugin = plugin;
         _configuration = plugin.Configuration;
         _chatGui = chatGui;
+        _keyState = keyState;
 
         Size = new Vector2(500, 400);
         SizeCondition = ImGuiCond.FirstUseEver;
@@ -156,6 +163,47 @@ public class PullToOBSConfigWindow : Window, IDisposable
         ImGui.Separator();
         ImGui.Spacing();
 
+        // ── Instapost / Quick Save ───────────────────────────────────────
+
+        ImGui.Text("Quick Save (Instapost)");
+        ImGui.Spacing();
+
+        var instapostEnabled = _configuration.InstapostEnabled;
+        if (ImGui.Checkbox("Enable quick save hotkey", ref instapostEnabled))
+        {
+            _configuration.InstapostEnabled = instapostEnabled;
+            _configuration.Save();
+        }
+
+        if (instapostEnabled)
+        {
+            ImGui.Spacing();
+
+            DrawInstapostHotkeyCaptureUi();
+
+            ImGui.Spacing();
+
+            var cooldown = _configuration.InstapostCooldownSeconds;
+            if (ImGui.SliderInt("Cooldown (seconds)", ref cooldown, 5, 60))
+            {
+                _configuration.InstapostCooldownSeconds = cooldown;
+                _configuration.Save();
+            }
+
+            ImGui.Spacing();
+            ImGui.TextColored(
+                new Vector4(0.6f, 0.6f, 0.6f, 1.0f),
+                "Click Change, then press your desired key combination. Escape cancels capture; Delete/Backspace clears while listening.");
+
+            ImGui.Spacing();
+            ImGui.Separator();
+            ImGui.Spacing();
+        }
+        else if (_capturingInstapostHotkey)
+        {
+            CancelInstapostHotkeyCapture();
+        }
+
         // Instructions
         ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1.0f), "How it works:");
         ImGui.TextWrapped(
@@ -165,6 +213,106 @@ public class PullToOBSConfigWindow : Window, IDisposable
             "\n3. On encounter start: Start recording, wait 5s, save replay buffer" +
             "\n4. On encounter end: Wait 5s overlap, stop recording" +
             "\n\nResult: Two files per encounter — replay buffer clip (prepull) + full recording.");
+    }
+
+    private void DrawInstapostHotkeyCaptureUi()
+    {
+        ProcessInstapostHotkeyCapture();
+
+        var binding = InstapostHotkey.FormatBinding(
+            _configuration.InstapostKeyCode,
+            _configuration.InstapostModCtrl,
+            _configuration.InstapostModShift,
+            _configuration.InstapostModAlt);
+
+        var displayText = _capturingInstapostHotkey
+            ? (_instapostCaptureArmed ? "Listening... press a key combination" : "Release all keys...")
+            : binding;
+
+        ImGui.Text("Hotkey:");
+        ImGui.SameLine();
+        ImGui.TextColored(new Vector4(0.9f, 0.9f, 0.9f, 1.0f), displayText);
+
+        ImGui.Spacing();
+
+        if (!_capturingInstapostHotkey)
+        {
+            if (ImGui.Button("Change", new Vector2(100, 0)))
+                BeginInstapostHotkeyCapture();
+
+            ImGui.SameLine();
+            if (ImGui.Button("Clear", new Vector2(100, 0)))
+                ClearInstapostHotkey();
+        }
+        else
+        {
+            if (ImGui.Button("Cancel", new Vector2(100, 0)))
+                CancelInstapostHotkeyCapture();
+
+            ImGui.SameLine();
+            if (ImGui.Button("Clear", new Vector2(100, 0)))
+            {
+                ClearInstapostHotkey();
+                CancelInstapostHotkeyCapture();
+            }
+        }
+    }
+
+    private void BeginInstapostHotkeyCapture()
+    {
+        _capturingInstapostHotkey = true;
+        _instapostCaptureArmed = false;
+    }
+
+    private void CancelInstapostHotkeyCapture()
+    {
+        _capturingInstapostHotkey = false;
+        _instapostCaptureArmed = false;
+    }
+
+    private void ClearInstapostHotkey()
+    {
+        _configuration.InstapostKeyCode = (int)VirtualKey.NO_KEY;
+        _configuration.InstapostModCtrl = false;
+        _configuration.InstapostModShift = false;
+        _configuration.InstapostModAlt = false;
+        _configuration.Save();
+    }
+
+    private void ProcessInstapostHotkeyCapture()
+    {
+        if (!_capturingInstapostHotkey)
+            return;
+
+        if (!_instapostCaptureArmed)
+        {
+            if (!InstapostHotkey.AreAnyCaptureKeysDown(_keyState))
+                _instapostCaptureArmed = true;
+
+            return;
+        }
+
+        var action = InstapostHotkey.GetCaptureAction(_keyState);
+        switch (action.Kind)
+        {
+            case InstapostHotkeyCaptureActionKind.None:
+                return;
+            case InstapostHotkeyCaptureActionKind.Cancel:
+                CancelInstapostHotkeyCapture();
+                return;
+            case InstapostHotkeyCaptureActionKind.Clear:
+                ClearInstapostHotkey();
+                CancelInstapostHotkeyCapture();
+                return;
+            case InstapostHotkeyCaptureActionKind.Set:
+                _configuration.InstapostKeyCode = (int)action.Key;
+                _configuration.InstapostModCtrl = action.Ctrl;
+                _configuration.InstapostModShift = action.Shift;
+                _configuration.InstapostModAlt = action.Alt;
+                _configuration.Save();
+                CancelInstapostHotkeyCapture();
+                return;
+        }
     }
 
     private void UpdateStatus()

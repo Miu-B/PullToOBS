@@ -1,5 +1,6 @@
 using System;
 using System.Threading.Tasks;
+using Dalamud.Game.ClientState.Keys;
 using Dalamud.Game.Command;
 using Dalamud.IoC;
 using Dalamud.Interface.FontIdentifier;
@@ -23,6 +24,7 @@ public sealed class PullToOBSPlugin : IDalamudPlugin
     [PluginService] internal static IChatGui ChatGui { get; private set; } = null!;
     [PluginService] internal static IFramework Framework { get; private set; } = null!;
     [PluginService] internal static IDataManager DataManager { get; private set; } = null!;
+    [PluginService] internal static IKeyState KeyState { get; private set; } = null!;
 
     private const string CommandName = "/pulltoobs";
     private const string CommandAlias = "/pto";
@@ -35,6 +37,8 @@ public sealed class PullToOBSPlugin : IDalamudPlugin
     public PullToOBSConfigWindow ConfigWindow { get; private set; }
     private OBSStatusIndicator _indicator;
     private readonly EncounterLogger _encounterLogger;
+    private readonly InstapostHandler _instapostHandler;
+    private readonly InstapostHotkeyMonitor _instapostHotkeyMonitor;
 
     // Scaled font handle for the indicator
     internal IFontHandle IndicatorFont { get; private set; } = null!;
@@ -45,6 +49,7 @@ public sealed class PullToOBSPlugin : IDalamudPlugin
     {
         Configuration = PluginInterface.GetPluginConfig() as PullToOBSConfiguration ?? new PullToOBSConfiguration();
         Configuration.SetSaveAction(PluginInterface.SavePluginConfig);
+        MigrateConfiguration();
 
         ObsController = new OBSController(Log);
         EncounterManager = new EncounterManager(ObsController, ClientState, PlayerState, Condition, Log);
@@ -53,21 +58,36 @@ public sealed class PullToOBSPlugin : IDalamudPlugin
         ObsController.ErrorOccurred += OnOBSError;
         EncounterManager.ErrorOccurred += OnEncounterError;
 
-        ConfigWindow = new PullToOBSConfigWindow(this, ChatGui);
+        ConfigWindow = new PullToOBSConfigWindow(this, ChatGui, KeyState);
         WindowSystem.AddWindow(ConfigWindow);
 
         _indicator = new OBSStatusIndicator(this, ClientState, Condition, ChatGui);
         WindowSystem.AddWindow(_indicator);
 
+        _instapostHandler = new InstapostHandler(
+            ObsController,
+            ClientState,
+            PlayerState,
+            Condition,
+            ChatGui,
+            Log,
+            territoryType => ResolveEncounterName(DataManager, territoryType),
+            territoryType => ResolveTerritoryName(DataManager, territoryType),
+            () => Configuration.InstapostCooldownSeconds,
+            () => Configuration.InstapostEnabled);
+        _instapostHotkeyMonitor = new InstapostHotkeyMonitor(KeyState);
+
+        _instapostHandler.QuickSaveTriggered += () => _indicator.TriggerQuickSaveFlash();
+
         EnsureIndicatorFont();
 
         CommandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
         {
-            HelpMessage = "Open PullToOBS configuration window. Subcommands: obs (toggle connection), rec (toggle standby), show/hide (indicator)."
+            HelpMessage = "Open PullToOBS configuration window. Subcommands: obs (toggle connection), rec (toggle standby), show/hide (indicator), insta (quick-save clip)."
         });
         CommandManager.AddHandler(CommandAlias, new CommandInfo(OnCommand)
         {
-            HelpMessage = "Open PullToOBS configuration window (alias). Subcommands: obs (toggle connection), rec (toggle standby), show/hide (indicator)."
+            HelpMessage = "Open PullToOBS configuration window (alias). Subcommands: obs (toggle connection), rec (toggle standby), show/hide (indicator), insta (quick-save clip)."
         });
 
         PluginInterface.UiBuilder.Draw += DrawUi;
@@ -83,6 +103,12 @@ public sealed class PullToOBSPlugin : IDalamudPlugin
     private void OnCommand(string command, string args)
     {
         var trimmedArgs = args.Trim().ToLower();
+
+        if (trimmedArgs == "insta")
+        {
+            _ = _instapostHandler.TryQuickSaveAsync();
+            return;
+        }
 
         if (trimmedArgs == "show")
         {
@@ -129,6 +155,48 @@ public sealed class PullToOBSPlugin : IDalamudPlugin
     private void OnFrameworkUpdate(IFramework framework)
     {
         EncounterManager.Update();
+        PollInstapostHotkey();
+    }
+
+    private void PollInstapostHotkey()
+    {
+        if (!Configuration.InstapostEnabled)
+        {
+            _instapostHotkeyMonitor.Reset();
+            return;
+        }
+
+        if (ConfigWindow.IsOpen)
+        {
+            _instapostHotkeyMonitor.SuppressUntilReleased();
+            return;
+        }
+
+        if (_instapostHotkeyMonitor.Update(
+                Configuration.InstapostKeyCode,
+                Configuration.InstapostModCtrl,
+                Configuration.InstapostModShift,
+                Configuration.InstapostModAlt))
+        {
+            _ = _instapostHandler.TryQuickSaveAsync();
+        }
+    }
+
+    private void MigrateConfiguration()
+    {
+        var changed = false;
+
+        if (Configuration.Version < 2)
+        {
+            if (InstapostHotkey.TryMigrateLegacyBinding(Configuration))
+                changed = true;
+
+            Configuration.Version = 2;
+            changed = true;
+        }
+
+        if (changed)
+            Configuration.Save();
     }
 
     /// <summary>
@@ -139,11 +207,14 @@ public sealed class PullToOBSPlugin : IDalamudPlugin
     {
         try
         {
-            await ObsController.ConnectAsync(Configuration.ObsWebSocketUrl, Configuration.ObsPassword);
+            await ObsController.ConnectAsync(
+                Configuration.ObsWebSocketUrl,
+                Configuration.ObsPassword,
+                suppressFailureNotification: true);
         }
         catch
         {
-            // Already handled via ErrorOccurred event and logged in ConnectAsync.
+            // Auto-connect failures are intentionally treated as a normal disconnected state.
         }
     }
 
@@ -236,6 +307,7 @@ public sealed class PullToOBSPlugin : IDalamudPlugin
 
         EncounterManager.Dispose();
         _encounterLogger.Dispose();
+        _instapostHandler.Dispose();
         ObsController.Dispose();
 
         if (_ownsIndicatorFont)
@@ -244,20 +316,7 @@ public sealed class PullToOBSPlugin : IDalamudPlugin
 
     private static string? ResolveEncounterName(IDataManager dataManager, uint territoryTypeId)
     {
-        TerritoryType? territory = null;
-        var territorySheet = dataManager.GetExcelSheet<TerritoryType>();
-        if (territorySheet is null)
-            return null;
-
-        foreach (var row in territorySheet)
-        {
-            if (row.RowId != territoryTypeId)
-                continue;
-
-            territory = row;
-            break;
-        }
-
+        var territory = FindTerritoryType(dataManager, territoryTypeId);
         if (territory is null)
             return null;
 
@@ -275,6 +334,31 @@ public sealed class PullToOBSPlugin : IDalamudPlugin
                 continue;
 
             return row.Name.ToString();
+        }
+
+        return null;
+    }
+
+    private static string? ResolveTerritoryName(IDataManager dataManager, uint territoryTypeId)
+    {
+        var territory = FindTerritoryType(dataManager, territoryTypeId);
+        if (territory is null)
+            return null;
+
+        var placeName = territory.Value.PlaceName.ValueNullable?.Name.ToString();
+        return string.IsNullOrWhiteSpace(placeName) ? null : placeName;
+    }
+
+    private static TerritoryType? FindTerritoryType(IDataManager dataManager, uint territoryTypeId)
+    {
+        var territorySheet = dataManager.GetExcelSheet<TerritoryType>();
+        if (territorySheet is null)
+            return null;
+
+        foreach (var row in territorySheet)
+        {
+            if (row.RowId == territoryTypeId)
+                return row;
         }
 
         return null;

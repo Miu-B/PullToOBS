@@ -35,18 +35,26 @@ I already had [rec-cue](https://github.com/Miu-B/rec-cue) to show me an in-game 
   * Designed for use with the [limitcut](https://github.com/Miu-B/limitcut) companion tool
   * Enabled via the "Save encounter metadata" checkbox in the config window (disabled by default)
 
+* **Quick Save / InstaPost** -- on-demand replay buffer clips
+  * Press a configurable hotkey in-game to save the current OBS replay buffer immediately
+  * Writes a timestamped `instapost_YYYYMMDD_HHMMSS.json` descriptor next to the replay buffer clip
+  * Includes replay buffer filename, job, encounter (if applicable), territory name, combat flag, and player name
+  * Designed for use with a future `limitcut --watch` flow for automated conversion/upload
+  * Shows a brief **gold flash** on the indicator when triggered
+
 * **Simple Configuration**
   * OBS WebSocket URL and password
   * Optional auto-connect on plugin start
   * Indicator position, scale, and visibility settings
   * Save encounter metadata toggle
+  * InstaPost enable toggle, hotkey capture, and cooldown setting
   * All settings are saved automatically
 
 ## Companion Tool
 
 Since PullToOBS produces two files per encounter (a replay buffer clip and the full recording), you'll probably want to stitch them together afterwards. [limitcut](https://github.com/Miu-B/limitcut) does exactly that -- it finds where the two recordings overlap using audio cross-correlation and combines them into a single MP4, no manual trimming required.
 
-PullToOBS can optionally generate JSON metadata files alongside recordings, which limitcut reads to organise your outputs into a structured directory tree. Enable "Save encounter metadata" in the config window to use this feature.
+PullToOBS can optionally generate JSON metadata files alongside recordings, which limitcut reads to organise your outputs into a structured directory tree. It can also generate timestamped InstaPost JSON descriptors alongside manually quick-saved replay buffer clips for a future `limitcut --watch` workflow. Enable "Save encounter metadata" and/or the InstaPost hotkey in the config window as needed.
 
 ## Requirements
 
@@ -75,6 +83,7 @@ Open the Plugin Installer in-game (`/xlplugins`), search for **PullToOBS**, and 
 5. The indicator shows up on screen -- **green** means ready, **orange** means replay buffer is not ready yet
 6. Enter combat and recording starts automatically
 7. (Optional) Check **"Save encounter metadata"** in the config window if you use limitcut — a JSON file will be written alongside each recording
+8. (Optional) Enable **Quick Save (Instapost)** in the config window, click **Change**, then press your desired key combination to capture it
 
 ### Commands
 
@@ -83,6 +92,7 @@ Open the Plugin Installer in-game (`/xlplugins`), search for **PullToOBS**, and 
 * `/pulltoobs rec` or `/pto rec` - Toggle standby mode (suppresses automatic recording; command is blocked during combat)
 * `/pulltoobs show` or `/pto show` - Show the indicator
 * `/pulltoobs hide` or `/pto hide` - Hide the indicator
+* `/pulltoobs insta` or `/pto insta` - Manually trigger an InstaPost quick-save clip
 
 ### Adjusting Indicator
 
@@ -104,6 +114,9 @@ All settings are saved automatically, so you can just set things up once and for
 * **Indicator Scale** - Scale multiplier for the indicator (0.5x to 2.0x)
 * **Hide Indicator** - Toggle indicator visibility
 * **Save encounter metadata** - Toggle JSON metadata file generation for use with limitcut (default: disabled)
+* **Enable quick save hotkey** - Enables InstaPost replay buffer saves (default: disabled)
+* **Quick save hotkey** - Click **Change**, then press your desired key combination; **Escape** cancels capture and **Delete/Backspace** clears the binding while capturing
+* **Quick save cooldown** - Minimum seconds between InstaPost triggers (default: 15)
 
 ## Development
 

@@ -15,7 +15,7 @@ public interface IOBSController : IDisposable
     event Action? ReplayBufferStateChanged;
     event Action<string>? ErrorOccurred;
 
-    Task ConnectAsync(string url, string password);
+    Task ConnectAsync(string url, string password, bool suppressFailureNotification = false);
     void Disconnect();
     void StartReplayBuffer();
     void StopReplayBuffer();

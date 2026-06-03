@@ -18,6 +18,12 @@ public class PullToOBSConfigurationTests
         Assert.Equal(new Vector2(300, 300), config.IndicatorPosition);
         Assert.Equal(1.0f, config.IndicatorScale);
         Assert.False(config.HideIndicator);
+        Assert.False(config.InstapostEnabled);
+        Assert.Equal(0, config.InstapostKeyCode);
+        Assert.False(config.InstapostModCtrl);
+        Assert.False(config.InstapostModShift);
+        Assert.False(config.InstapostModAlt);
+        Assert.Equal(15, config.InstapostCooldownSeconds);
     }
 
     [Fact]
@@ -25,7 +31,7 @@ public class PullToOBSConfigurationTests
     {
         var config = new PullToOBSConfiguration();
 
-        Assert.Equal(1, config.Version);
+        Assert.Equal(2, config.Version);
     }
 
     [Fact]
